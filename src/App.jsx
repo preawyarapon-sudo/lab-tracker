@@ -4,22 +4,24 @@ import { db } from "./firebase";
 import { ref, onValue, set, remove } from "firebase/database";
 
 const C = {
-  bg: "#0E1613",
-  bg2: "#0B120F",
-  panel: "#141F1B",
-  panel2: "#1A2620",
-  border: "#25352E",
-  borderSoft: "#1E2C26",
-  text: "#E6EFE9",
-  textMuted: "#93AA9E",
-  textFaint: "#5B7268",
-  amber: "#E5A039",
-  amberDim: "#4A3A1E",
-  green: "#4BB784",
-  greenDim: "#1E3A2C",
-  gray: "#516259",
-  cyan: "#3ED8C4",
-  red: "#D9695A",
+  bg: "#FFFFFF",
+  bg2: "#F3F8FD",
+  panel: "#FFFFFF",
+  panel2: "#EAF3FB",
+  border: "#D3E6F5",
+  borderSoft: "#E4EFF9",
+  text: "#0B2A4A",
+  textMuted: "#5B7A96",
+  textFaint: "#9BB4C9",
+  amber: "#C97F0E",
+  amberDim: "#FBEBD3",
+  green: "#1E9E6B",
+  greenDim: "#DCF3E9",
+  gray: "#7E93A6",
+  cyan: "#0E6FBA",
+  cyanDim: "#DCEDFB",
+  red: "#C6493B",
+  redDim: "#FBE4E1",
 };
 
 const STATUS = { WAIT: "Waiting", RUN: "Running", DONE: "Complete" };
@@ -139,10 +141,10 @@ function StatusBadge({ status }) {
 function Btn({ children, onClick, kind = "default", small, disabled, title }) {
   const styles = {
     default: { bg: "transparent", border: C.border, color: C.text },
-    primary: { bg: C.cyan, border: C.cyan, color: "#04211C" },
+    primary: { bg: C.cyan, border: C.cyan, color: "#FFFFFF" },
     danger: { bg: "transparent", border: C.red, color: C.red },
-    amber: { bg: C.amber, border: C.amber, color: "#3A2A05" },
-    green: { bg: C.green, border: C.green, color: "#08281B" },
+    amber: { bg: C.amber, border: C.amber, color: "#FFFFFF" },
+    green: { bg: C.green, border: C.green, color: "#FFFFFF" },
   };
   const s = styles[kind];
   return (
@@ -624,10 +626,10 @@ export default function App() {
   );
 
   return (
-    <div style={{ background: C.bg, minHeight: 500, borderRadius: 10, fontFamily: "system-ui, sans-serif", color: C.text, padding: 0, border: `1px solid ${C.borderSoft}` }}>
+    <div style={{ background: C.bg, minHeight: 500, borderRadius: 10, fontFamily: "'Prompt', system-ui, sans-serif", color: C.text, padding: 0, border: `1px solid ${C.border}`, boxShadow: "0 2px 18px rgba(14, 111, 186, 0.08)" }}>
       <div style={{ padding: "16px 20px", borderBottom: `1px solid ${C.borderSoft}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-          <div style={{ width: 30, height: 30, borderRadius: 6, background: C.greenDim, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ width: 30, height: 30, borderRadius: 6, background: C.cyanDim, display: "flex", alignItems: "center", justifyContent: "center" }}>
             <FlaskConical size={17} color={C.cyan} />
           </div>
           <div>
@@ -649,7 +651,7 @@ export default function App() {
 
       <div style={{ padding: 20 }}>
         {error && (
-          <div style={{ marginBottom: 14, padding: "8px 12px", background: "#3A1E1E", border: `1px solid ${C.red}`, borderRadius: 6, color: "#F0B8B0", fontSize: 12, display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ marginBottom: 14, padding: "8px 12px", background: C.redDim, border: `1px solid ${C.red}`, borderRadius: 6, color: "#7A2D22", fontSize: 12, display: "flex", alignItems: "center", gap: 8 }}>
             <AlertCircle size={14} /> {error}
           </div>
         )}
