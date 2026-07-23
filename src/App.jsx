@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
-import { FlaskConical, Plus, X, RefreshCw, LayoutGrid, ListChecks, Users, Layers, Trash2, Play, CheckCircle2, CircleDot, Circle, ChevronRight, ChevronDown, AlertCircle } from "lucide-react";
+import { FlaskConical, Plus, X, RefreshCw, LayoutGrid, ListChecks, Users, Layers, Trash2, Play, CheckCircle2, CircleDot, Circle, ChevronRight, ChevronDown, AlertCircle, ClipboardPaste, Sparkles } from "lucide-react";
 import { db } from "./firebase";
 import { ref, onValue, set, remove } from "firebase/database";
 
@@ -57,6 +57,80 @@ function deadlineInfo(job) {
   if (days >= LATE_DAYS) return { level: "late", days };
   if (days >= WARN_DAYS) return { level: "warn", days };
   return { level: "ok", days };
+}
+
+// Converts a dd/mm/yyyy string (as printed on lab documents) to a timestamp.
+function thaiDateToTs(str) {
+  const m = str && str.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+  if (!m) return null;
+  const [, d, mo, y] = m;
+  const ts = new Date(`${y}-${mo}-${d}T00:00:00`).getTime();
+  return Number.isNaN(ts) ? null : ts;
+}
+
+// Parses text pasted from a "ใบแจกจ่ายงานวิเคราะห์ / ข้อมูลทะเบียนและรายชื่อ" document
+// (or similar job-order sheet) and pulls out the job number, parameter list,
+// and individual sample registration numbers/names it can recognize.
+// Anything it can't find is just left blank for the user to fill in by hand.
+function parseImportText(text) {
+  const norm = (text || "").replace(/\r\n/g, "\n");
+
+  const jobNoMatch = norm.match(/\b([A-Za-z]{1,5}\d{2}-\d{3,7})\b/);
+  const jobNo = jobNoMatch ? jobNoMatch[1].toUpperCase() : "";
+
+  const parameters = [...norm.matchAll(/^[•·][ \t]*(.+?)[ \t]*$/gm)]
+    .map((m) => m[1].trim())
+    .filter(Boolean);
+
+  let sampleType = "";
+  const typeMatch = norm.match(/ประเภทตัวอย[่]?าง[^\n]*\n[ \t]*([^\n]+)/);
+  if (typeMatch) {
+    // The matched line can sometimes be a full table row (e.g. "05486 05493
+    // 8 น้าตาล") rather than a clean label value — strip pure-digit tokens
+    // (registration numbers / counts) so only the descriptive type remains.
+    sampleType = typeMatch[1]
+      .split(/\s+/)
+      .filter((t) => t && !/^\d+$/.test(t))
+      .join(" ")
+      .trim();
+  }
+
+  const rangeMatch = norm.match(/(\d{4,7})[ \t]*-[ \t]*(\d{4,7})/);
+  const rangeStart = rangeMatch ? rangeMatch[1] : "";
+  const rangeEnd = rangeMatch ? rangeMatch[2] : "";
+
+  const countMatch = norm.match(/(\d+)[ \t]*ตัวอย[่]?าง[่]?/);
+  const totalSamples = countMatch ? parseInt(countMatch[1], 10) : null;
+
+  const dates = [...norm.matchAll(/(\d{2}\/\d{2}\/\d{4})/g)].map((m) => m[1]);
+  const receivedDate = dates[0] || "";
+  const dueDate = dates[1] || "";
+
+  // Rows like "05486   ถุงบรรจุ 500 g D240" (registration number + sample name)
+  const sampleMap = {};
+  for (const m of norm.matchAll(/^(\d{5})[ \t]+([^\n\d][^\n]*)$/gm)) {
+    sampleMap[m[1]] = m[2].trim();
+  }
+  // Standalone registration numbers with no name given
+  for (const m of norm.matchAll(/^(\d{5})[ \t]*$/gm)) {
+    if (!(m[1] in sampleMap)) sampleMap[m[1]] = "";
+  }
+  let samples = Object.entries(sampleMap).map(([code, name]) => ({ code, name }));
+  if (samples.length === 0 && rangeStart && rangeEnd) {
+    const start = parseInt(rangeStart, 10);
+    const end = parseInt(rangeEnd, 10);
+    const width = rangeStart.length;
+    if (end >= start && end - start < 500) {
+      for (let n = start; n <= end; n++) samples.push({ code: String(n).padStart(width, "0"), name: "" });
+    }
+  }
+  samples.sort((a, b) => a.code.localeCompare(b.code));
+
+  const sampleSummary = [sampleType, rangeStart && rangeEnd ? `${rangeStart}-${rangeEnd}` : "", totalSamples ? `${totalSamples} ตัวอย่าง` : ""]
+    .filter(Boolean)
+    .join(" · ");
+
+  return { jobNo, parameters, samples, sampleSummary, receivedDate, dueDate };
 }
 // jobs are already sorted numerically descending (see subscribeJobs), so
 // jobs[0] is the latest job number actually used. We bump its trailing
@@ -304,6 +378,45 @@ function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, knownAnalysts
   const addRow = () => setRows((rs) => [...rs, { id: uid(), name: "", analyst: "" }]);
   const removeRow = (id) => setRows((rs) => (rs.length > 1 ? rs.filter((r) => r.id !== id) : rs));
 
+  // Individual sample registration numbers under this job (optional — only
+  // shown/used when the job actually has sub-samples, e.g. imported from a
+  // lab job-order document).
+  const [subsamples, setSubsamples] = useState(
+    isEdit && editingJob.samples ? editingJob.samples.map((s) => ({ id: uid(), code: s.code, name: s.name || "" })) : []
+  );
+  const updateSubsample = (id, field, val) => setSubsamples((ss) => ss.map((s) => (s.id === id ? { ...s, [field]: val } : s)));
+  const addSubsample = () => setSubsamples((ss) => [...ss, { id: uid(), code: "", name: "" }]);
+  const removeSubsample = (id) => setSubsamples((ss) => ss.filter((s) => s.id !== id));
+
+  // "Import from document" panel: paste raw text copied from a job-order
+  // sheet (PDF/Word) and auto-fill job no / parameters / samples from it.
+  const [showImport, setShowImport] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importInfo, setImportInfo] = useState(null);
+  const [receivedTs, setReceivedTs] = useState(null);
+
+  const handleParseImport = () => {
+    const parsed = parseImportText(importText);
+    const foundAnything = parsed.jobNo || parsed.parameters.length > 0 || parsed.samples.length > 0;
+    if (!foundAnything) {
+      setImportInfo({ ok: false, msg: "ไม่พบรหัสงาน/พารามิเตอร์/ตัวอย่างในข้อความนี้ ลองวางข้อความทั้งหมดจากเอกสารอีกครั้ง" });
+      return;
+    }
+    if (!isEdit && parsed.jobNo) setJobNo(parsed.jobNo);
+    if (parsed.sampleSummary) setSample(parsed.sampleSummary);
+    if (parsed.parameters.length > 0) {
+      setRows(parsed.parameters.map((name) => ({ id: uid(), name, analyst: "" })));
+    }
+    if (parsed.samples.length > 0) {
+      setSubsamples(parsed.samples.map((s) => ({ id: uid(), code: s.code, name: s.name })));
+    }
+    if (!isEdit && parsed.receivedDate) setReceivedTs(thaiDateToTs(parsed.receivedDate));
+    setImportInfo({
+      ok: true,
+      msg: `นำเข้าแล้ว — พารามิเตอร์ ${parsed.parameters.length} รายการ, ตัวอย่าง ${parsed.samples.length} รายการ ตรวจสอบและแก้ไขเพิ่มเติมได้ตามต้องการ`,
+    });
+  };
+
   const isDuplicate = !isEdit && existingJobNos.includes(jobNo.trim());
   const canSubmit = jobNo.trim() && rows.some((r) => r.name.trim()) && !isDuplicate;
 
@@ -331,7 +444,12 @@ function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, knownAnalysts
             updatedLabel: nowHM(),
           };
         });
-      onSaveEdit({ ...editingJob, sample: sample.trim(), parameters });
+      onSaveEdit({
+        ...editingJob,
+        sample: sample.trim(),
+        parameters,
+        samples: subsamples.filter((s) => s.code.trim()).map((s) => ({ code: s.code.trim(), name: s.name.trim() })),
+      });
     } else {
       const parameters = rows
         .filter((r) => r.name.trim())
@@ -346,7 +464,13 @@ function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, knownAnalysts
           updatedTs: nowTS(),
           updatedLabel: nowHM(),
         }));
-      onCreate({ jobNo: jobNo.trim(), sample: sample.trim(), createdAt: nowTS(), parameters });
+      onCreate({
+        jobNo: jobNo.trim(),
+        sample: sample.trim(),
+        createdAt: receivedTs || nowTS(),
+        parameters,
+        samples: subsamples.filter((s) => s.code.trim()).map((s) => ({ code: s.code.trim(), name: s.name.trim() })),
+      });
     }
   };
 
@@ -369,10 +493,40 @@ function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, knownAnalysts
           <FlaskConical size={16} color={C.cyan} />
           {isEdit ? `แก้ไขรหัสงาน ${editingJob.jobNo}` : "สร้างรหัสงานใหม่"}
         </div>
-        <button onClick={onCancel} style={{ background: "none", border: "none", cursor: "pointer", color: C.textMuted }}>
-          <X size={18} />
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <Btn small onClick={() => setShowImport((v) => !v)}>
+            <ClipboardPaste size={13} /> วางข้อความจากเอกสาร
+          </Btn>
+          <button onClick={onCancel} style={{ background: "none", border: "none", cursor: "pointer", color: C.textMuted }}>
+            <X size={18} />
+          </button>
+        </div>
       </div>
+
+      {showImport && (
+        <div style={{ background: C.bg2, border: `1px dashed ${C.border}`, borderRadius: 6, padding: 12, marginBottom: 16 }}>
+          <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 6 }}>
+            วางข้อความที่คัดลอกจากใบแจกจ่ายงานวิเคราะห์ / ข้อมูลทะเบียนและรายชื่อ ระบบจะพยายามดึงรหัสงาน พารามิเตอร์ และเลขทะเบียนตัวอย่างให้อัตโนมัติ — ตรวจสอบและแก้ไขเพิ่มลดเองได้ก่อนบันทึก
+          </div>
+          <textarea
+            value={importText}
+            onChange={(e) => { setImportText(e.target.value); setImportInfo(null); }}
+            placeholder="วางข้อความทั้งหมดจากเอกสารตรงนี้..."
+            rows={6}
+            style={{ ...inputStyle, fontFamily: "monospace", fontSize: 12, resize: "vertical", marginBottom: 8 }}
+          />
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <Btn small kind="primary" onClick={handleParseImport} disabled={!importText.trim()}>
+              <Sparkles size={13} /> แยกข้อมูลอัตโนมัติ
+            </Btn>
+            {importInfo && (
+              <div style={{ fontSize: 12, color: importInfo.ok ? C.green : C.red, maxWidth: 420, textAlign: "right" }}>
+                {importInfo.msg}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
         <div>
@@ -425,8 +579,30 @@ function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, knownAnalysts
           </div>
         ))}
       </div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
         <Btn small onClick={addRow}><Plus size={14} /> เพิ่มพารามิเตอร์</Btn>
+      </div>
+
+      <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>
+        ตัวอย่างย่อย / เลขทะเบียน ({subsamples.length})
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+        {subsamples.map((s, i) => (
+          <div key={s.id} style={{ display: "grid", gridTemplateColumns: "20px 1fr 2fr 26px", gap: 8, alignItems: "center" }}>
+            <div style={{ fontSize: 11, color: C.textFaint, fontFamily: "monospace" }}>{i + 1}</div>
+            <input style={{ ...inputStyle, fontFamily: "monospace" }} placeholder="เลขทะเบียน เช่น 05486" value={s.code} onChange={(e) => updateSubsample(s.id, "code", e.target.value)} />
+            <input style={inputStyle} placeholder="ชื่อตัวอย่าง (ถ้ามี)" value={s.name} onChange={(e) => updateSubsample(s.id, "name", e.target.value)} />
+            <button onClick={() => removeSubsample(s.id)} style={{ background: "none", border: "none", cursor: "pointer", color: C.textFaint }}>
+              <Trash2 size={15} />
+            </button>
+          </div>
+        ))}
+        {subsamples.length === 0 && (
+          <div style={{ fontSize: 12, color: C.textFaint }}>ไม่มีตัวอย่างย่อย (ไม่จำเป็นถ้างานนี้มีตัวอย่างเดียว)</div>
+        )}
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <Btn small onClick={addSubsample}><Plus size={14} /> เพิ่มตัวอย่างย่อย</Btn>
         <div style={{ display: "flex", gap: 8 }}>
           <Btn onClick={onCancel}>ยกเลิก</Btn>
           <Btn kind="primary" onClick={submit} disabled={!canSubmit}>{isEdit ? "บันทึกการแก้ไข" : "บันทึกรหัสงาน"}</Btn>
@@ -467,6 +643,22 @@ function JobDetail({ job, onBack, onUpdateParam, onDeleteJob, onEditJob }) {
       <div style={{ margin: "14px 0 18px" }}>
         <LedBar parameters={job.parameters} />
       </div>
+
+      {job.samples && job.samples.length > 0 && (
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>
+            ตัวอย่างย่อย ({job.samples.length})
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {job.samples.map((s) => (
+              <div key={s.code} style={{ background: C.panel2, border: `1px solid ${C.borderSoft}`, borderRadius: 5, padding: "5px 10px", fontSize: 12 }}>
+                <span style={{ fontFamily: "monospace", fontWeight: 700, color: C.cyan }}>{s.code}</span>
+                {s.name && <span style={{ color: C.textMuted }}> · {s.name}</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
