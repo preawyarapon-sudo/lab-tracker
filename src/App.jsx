@@ -206,7 +206,7 @@ async function deleteJobStorage(jobNo) {
 }
 
 // ---------- New Job Form ----------
-function NewJobForm({ onCancel, onCreate, suggestedNo, knownAnalysts }) {
+function NewJobForm({ onCancel, onCreate, suggestedNo, knownAnalysts, knownParams }) {
   const [jobNo, setJobNo] = useState(suggestedNo);
   const [sample, setSample] = useState("");
   const [rows, setRows] = useState([
@@ -280,11 +280,14 @@ function NewJobForm({ onCancel, onCreate, suggestedNo, knownAnalysts }) {
       <datalist id="analyst-list">
         {knownAnalysts.map((a) => <option key={a} value={a} />)}
       </datalist>
+      <datalist id="param-list">
+        {knownParams.map((p) => <option key={p} value={p} />)}
+      </datalist>
       <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
         {rows.map((r, i) => (
           <div key={r.id} style={{ display: "grid", gridTemplateColumns: "20px 1.5fr 1fr 26px", gap: 8, alignItems: "center" }}>
             <div style={{ fontSize: 11, color: C.textFaint, fontFamily: "monospace" }}>{i + 1}</div>
-            <input style={inputStyle} placeholder="พารามิเตอร์ เช่น pH" value={r.name} onChange={(e) => updateRow(r.id, "name", e.target.value)} />
+            <input style={inputStyle} placeholder="พารามิเตอร์ เช่น pH" list="param-list" value={r.name} onChange={(e) => updateRow(r.id, "name", e.target.value)} />
             <input style={inputStyle} placeholder="ผู้วิเคราะห์" list="analyst-list" value={r.analyst} onChange={(e) => updateRow(r.id, "analyst", e.target.value)} />
             <button onClick={() => removeRow(r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: C.textFaint }}>
               <Trash2 size={15} />
@@ -420,39 +423,112 @@ function JobsList({ jobs, onOpen }) {
 }
 
 // ---------- Analysts Tab ----------
-function AnalystsTable({ analysts }) {
+function analystParams(jobs, name) {
+  const rows = [];
+  for (const job of jobs) {
+    for (const p of job.parameters) {
+      if (p.analyst === name) {
+        rows.push({ ...p, jobNo: job.jobNo, sample: job.sample });
+      }
+    }
+  }
+  const order = { [STATUS.RUN]: 0, [STATUS.WAIT]: 1, [STATUS.DONE]: 2 };
+  rows.sort((x, y) => (order[x.status] ?? 3) - (order[y.status] ?? 3));
+  return rows;
+}
+
+function AnalystsTable({ analysts, jobs, onOpenJob }) {
+  const [expanded, setExpanded] = useState(null);
+
   return (
     <Panel style={{ overflow: "hidden" }}>
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
             <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-              {["Analyst", "Current Job", "Current Parameter", "Started", "Last Update", "Queue"].map((h) => (
+              {["", "Analyst", "Current Job", "Current Parameter", "Started", "Last Update", "Queue"].map((h) => (
                 <th key={h} style={{ textAlign: "left", padding: "10px 12px", color: C.textMuted, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 600 }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {analysts.map((a) => (
-              <tr key={a.name} style={{ borderBottom: `1px solid ${C.borderSoft}` }}>
-                <td style={{ padding: "10px 12px", fontWeight: 700, color: C.text }}>{a.name}</td>
-                <td style={{ padding: "10px 12px", fontFamily: "monospace", color: a.currentJob ? C.cyan : C.textFaint }}>{a.currentJob || "ว่าง"}</td>
-                <td style={{ padding: "10px 12px", color: C.text }}>
-                  {a.currentParam ? (
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                      <CircleDot size={13} color={C.amber} /> {a.currentParam}
-                    </span>
-                  ) : "-"}
-                </td>
-                <td style={{ padding: "10px 12px", color: C.textMuted, fontFamily: "monospace" }}>{a.startedLabel || "-"}</td>
-                <td style={{ padding: "10px 12px", color: C.textMuted, fontFamily: "monospace" }}>{a.lastUpdateLabel || "-"}</td>
-                <td style={{ padding: "10px 12px" }}>
-                  <Badge color={a.queue > 0 ? C.amber : C.textMuted} bg={a.queue > 0 ? C.amberDim : C.panel2}>{a.queue} เหลือ</Badge>
-                </td>
-              </tr>
-            ))}
+            {analysts.map((a) => {
+              const isOpen = expanded === a.name;
+              const params = isOpen ? analystParams(jobs, a.name) : [];
+              return (
+                <React.Fragment key={a.name}>
+                  <tr
+                    onClick={() => setExpanded(isOpen ? null : a.name)}
+                    style={{ borderBottom: `1px solid ${C.borderSoft}`, cursor: "pointer" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = C.panel2)}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                  >
+                    <td style={{ padding: "10px 12px", width: 20 }}>
+                      {isOpen ? <ChevronDown size={15} color={C.textFaint} /> : <ChevronRight size={15} color={C.textFaint} />}
+                    </td>
+                    <td style={{ padding: "10px 12px", fontWeight: 700, color: C.text }}>{a.name}</td>
+                    <td style={{ padding: "10px 12px", fontFamily: "monospace", color: a.currentJob ? C.cyan : C.textFaint }}>{a.currentJob || "ว่าง"}</td>
+                    <td style={{ padding: "10px 12px", color: C.text }}>
+                      {a.currentParam ? (
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                          <CircleDot size={13} color={C.amber} /> {a.currentParam}
+                        </span>
+                      ) : "-"}
+                    </td>
+                    <td style={{ padding: "10px 12px", color: C.textMuted, fontFamily: "monospace" }}>{a.startedLabel || "-"}</td>
+                    <td style={{ padding: "10px 12px", color: C.textMuted, fontFamily: "monospace" }}>{a.lastUpdateLabel || "-"}</td>
+                    <td style={{ padding: "10px 12px" }}>
+                      <Badge color={a.queue > 0 ? C.amber : C.textMuted} bg={a.queue > 0 ? C.amberDim : C.panel2}>{a.queue} เหลือ</Badge>
+                    </td>
+                  </tr>
+                  {isOpen && (
+                    <tr>
+                      <td colSpan={7} style={{ padding: 0, background: C.bg2 }}>
+                        <div style={{ padding: "10px 16px 16px 42px" }}>
+                          <div style={{ fontSize: 11, color: C.textMuted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
+                            งานทั้งหมดของ {a.name} ({params.length})
+                          </div>
+                          {params.length === 0 ? (
+                            <div style={{ color: C.textFaint, fontSize: 13 }}>ไม่มีงานที่รับผิดชอบ</div>
+                          ) : (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                              {params.map((p) => (
+                                <div
+                                  key={`${p.jobNo}-${p.id}`}
+                                  onClick={(e) => { e.stopPropagation(); onOpenJob(p.jobNo); }}
+                                  style={{
+                                    display: "grid",
+                                    gridTemplateColumns: "110px 1fr 1fr 90px 70px 70px",
+                                    gap: 10,
+                                    alignItems: "center",
+                                    padding: "8px 10px",
+                                    background: C.panel,
+                                    border: `1px solid ${C.borderSoft}`,
+                                    borderRadius: 6,
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  <span style={{ fontFamily: "monospace", fontWeight: 700, color: C.cyan, fontSize: 12 }}>{p.jobNo}</span>
+                                  <span style={{ color: C.textMuted, fontSize: 12 }}>{p.sample || "-"}</span>
+                                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: C.text, fontSize: 13, fontWeight: 600 }}>
+                                    <StatusGlyph status={p.status} size={12} /> {p.name}
+                                  </span>
+                                  <span><StatusBadge status={p.status} /></span>
+                                  <span style={{ fontFamily: "monospace", fontSize: 12, color: C.textMuted }}>{p.start || "-"}</span>
+                                  <span style={{ fontFamily: "monospace", fontSize: 12, color: C.textMuted }}>{p.finish || "-"}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
             {analysts.length === 0 && (
-              <tr><td colSpan={6} style={{ padding: 30, textAlign: "center", color: C.textFaint }}>ยังไม่มีข้อมูลผู้วิเคราะห์</td></tr>
+              <tr><td colSpan={7} style={{ padding: 30, textAlign: "center", color: C.textFaint }}>ยังไม่มีข้อมูลผู้วิเคราะห์</td></tr>
             )}
           </tbody>
         </table>
@@ -567,6 +643,7 @@ export default function App() {
 
   const analysts = useMemo(() => computeAnalysts(jobs), [jobs]);
   const knownAnalysts = useMemo(() => [...new Set(jobs.flatMap(j => j.parameters.map(p => p.analyst).filter(Boolean)))], [jobs]);
+  const knownParams = useMemo(() => [...new Set(jobs.flatMap(j => j.parameters.map(p => p.name).filter(Boolean)))].sort((a, b) => a.localeCompare(b, "th")), [jobs]);
 
   // Note: we don't need to manually update local state after these calls —
   // the onValue subscription above fires as soon as Firebase confirms the
@@ -668,6 +745,7 @@ export default function App() {
                     onCreate={handleCreate}
                     suggestedNo={genJobNo(jobs.length)}
                     knownAnalysts={knownAnalysts}
+                    knownParams={knownParams}
                   />
                 )}
                 {selectedJob ? (
@@ -677,7 +755,7 @@ export default function App() {
                 )}
               </>
             )}
-            {tab === "analysts" && <AnalystsTable analysts={analysts} />}
+            {tab === "analysts" && <AnalystsTable analysts={analysts} jobs={jobs} onOpenJob={openJob} />}
           </>
         )}
       </div>
