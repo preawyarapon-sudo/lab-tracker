@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
-import { FlaskConical, Plus, X, RefreshCw, LayoutGrid, ListChecks, Users, Trash2, Play, CheckCircle2, CircleDot, Circle, ChevronRight, ChevronDown, AlertCircle } from "lucide-react";
+import { FlaskConical, Plus, X, RefreshCw, LayoutGrid, ListChecks, Users, Layers, Trash2, Play, CheckCircle2, CircleDot, Circle, ChevronRight, ChevronDown, AlertCircle } from "lucide-react";
 import { db } from "./firebase";
 import { ref, onValue, set, remove } from "firebase/database";
 
@@ -83,6 +83,39 @@ function computeAnalysts(jobs) {
     }
   }
   return Object.values(map).sort((x, y) => x.name.localeCompare(y.name, "th"));
+}
+
+function computeParamQueue(jobs) {
+  const map = {};
+  for (const job of jobs) {
+    for (const p of job.parameters) {
+      if (!p.name) continue;
+      if (!map[p.name]) {
+        map[p.name] = { name: p.name, total: 0, waiting: 0, running: 0, complete: 0, analysts: new Set() };
+      }
+      const g = map[p.name];
+      g.total += 1;
+      if (p.status === STATUS.WAIT) g.waiting += 1;
+      if (p.status === STATUS.RUN) g.running += 1;
+      if (p.status === STATUS.DONE) g.complete += 1;
+      if (p.analyst) g.analysts.add(p.analyst);
+    }
+  }
+  return Object.values(map)
+    .map((g) => ({ ...g, analysts: [...g.analysts].sort((a, b) => a.localeCompare(b, "th")) }))
+    .sort((x, y) => y.waiting + y.running - (x.waiting + x.running));
+}
+
+function paramJobs(jobs, name) {
+  const rows = [];
+  for (const job of jobs) {
+    for (const p of job.parameters) {
+      if (p.name === name) rows.push({ ...p, jobNo: job.jobNo, sample: job.sample });
+    }
+  }
+  const order = { [STATUS.RUN]: 0, [STATUS.WAIT]: 1, [STATUS.DONE]: 2 };
+  rows.sort((x, y) => (order[x.status] ?? 3) - (order[y.status] ?? 3));
+  return rows;
 }
 
 function StatusGlyph({ status, size = 15 }) {
@@ -537,6 +570,102 @@ function AnalystsTable({ analysts, jobs, onOpenJob }) {
   );
 }
 
+// ---------- Parameters Tab (queue grouped by parameter) ----------
+function ParametersTable({ jobs, onOpenJob }) {
+  const groups = useMemo(() => computeParamQueue(jobs), [jobs]);
+  const [expanded, setExpanded] = useState(null);
+
+  return (
+    <Panel style={{ overflow: "hidden" }}>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead>
+            <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+              {["", "Parameter", "Waiting", "Running", "Complete", "Total", "Analysts"].map((h) => (
+                <th key={h} style={{ textAlign: "left", padding: "10px 12px", color: C.textMuted, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 600 }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {groups.map((g) => {
+              const isOpen = expanded === g.name;
+              const rows = isOpen ? paramJobs(jobs, g.name) : [];
+              return (
+                <React.Fragment key={g.name}>
+                  <tr
+                    onClick={() => setExpanded(isOpen ? null : g.name)}
+                    style={{ borderBottom: `1px solid ${C.borderSoft}`, cursor: "pointer" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = C.panel2)}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                  >
+                    <td style={{ padding: "10px 12px", width: 20 }}>
+                      {isOpen ? <ChevronDown size={15} color={C.textFaint} /> : <ChevronRight size={15} color={C.textFaint} />}
+                    </td>
+                    <td style={{ padding: "10px 12px", fontWeight: 700, color: C.text }}>{g.name}</td>
+                    <td style={{ padding: "10px 12px" }}>
+                      {g.waiting > 0 ? <Badge color={C.textMuted} bg={C.panel2}>{g.waiting}</Badge> : <span style={{ color: C.textFaint }}>0</span>}
+                    </td>
+                    <td style={{ padding: "10px 12px" }}>
+                      {g.running > 0 ? <Badge color={C.amber} bg={C.amberDim}>{g.running}</Badge> : <span style={{ color: C.textFaint }}>0</span>}
+                    </td>
+                    <td style={{ padding: "10px 12px" }}>
+                      {g.complete > 0 ? <Badge color={C.green} bg={C.greenDim}>{g.complete}</Badge> : <span style={{ color: C.textFaint }}>0</span>}
+                    </td>
+                    <td style={{ padding: "10px 12px", fontFamily: "monospace", color: C.textMuted }}>{g.total}</td>
+                    <td style={{ padding: "10px 12px", color: C.textMuted, fontSize: 12 }}>
+                      {g.analysts.length > 0 ? g.analysts.join(", ") : "-"}
+                    </td>
+                  </tr>
+                  {isOpen && (
+                    <tr>
+                      <td colSpan={7} style={{ padding: 0, background: C.bg2 }}>
+                        <div style={{ padding: "10px 16px 16px 42px" }}>
+                          <div style={{ fontSize: 11, color: C.textMuted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
+                            คิวของ "{g.name}" ({rows.length})
+                          </div>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                            {rows.map((p) => (
+                              <div
+                                key={`${p.jobNo}-${p.id}`}
+                                onClick={(e) => { e.stopPropagation(); onOpenJob(p.jobNo); }}
+                                style={{
+                                  display: "grid",
+                                  gridTemplateColumns: "110px 1fr 1fr 90px 70px 70px",
+                                  gap: 10,
+                                  alignItems: "center",
+                                  padding: "8px 10px",
+                                  background: C.panel,
+                                  border: `1px solid ${C.borderSoft}`,
+                                  borderRadius: 6,
+                                  cursor: "pointer",
+                                }}
+                              >
+                                <span style={{ fontFamily: "monospace", fontWeight: 700, color: C.cyan, fontSize: 12 }}>{p.jobNo}</span>
+                                <span style={{ color: C.textMuted, fontSize: 12 }}>{p.sample || "-"}</span>
+                                <span style={{ color: C.text, fontSize: 13 }}>{p.analyst || "-"}</span>
+                                <span><StatusBadge status={p.status} /></span>
+                                <span style={{ fontFamily: "monospace", fontSize: 12, color: C.textMuted }}>{p.start || "-"}</span>
+                                <span style={{ fontFamily: "monospace", fontSize: 12, color: C.textMuted }}>{p.finish || "-"}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
+            {groups.length === 0 && (
+              <tr><td colSpan={7} style={{ padding: 30, textAlign: "center", color: C.textFaint }}>ยังไม่มีพารามิเตอร์ในระบบ</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </Panel>
+  );
+}
+
 // ---------- Dashboard ----------
 function Dashboard({ jobs, analysts, onOpen }) {
   const allParams = jobs.flatMap((j) => j.parameters);
@@ -724,6 +853,7 @@ export default function App() {
         {tabBtn("dashboard", "Dashboard", LayoutGrid)}
         {tabBtn("jobs", "Jobs", ListChecks)}
         {tabBtn("analysts", "Analysts", Users)}
+        {tabBtn("parameters", "Parameters", Layers)}
       </div>
 
       <div style={{ padding: 20 }}>
@@ -756,6 +886,7 @@ export default function App() {
               </>
             )}
             {tab === "analysts" && <AnalystsTable analysts={analysts} jobs={jobs} onOpenJob={openJob} />}
+            {tab === "parameters" && <ParametersTable jobs={jobs} onOpenJob={openJob} />}
           </>
         )}
       </div>
