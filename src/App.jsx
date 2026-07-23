@@ -68,6 +68,40 @@ function thaiDateToTs(str) {
   return Number.isNaN(ts) ? null : ts;
 }
 
+// Elements that get folded into a single "ICP-A" / "ICP-B" parameter when
+// they appear as "Total <element>" or "Extractable <element>" bullets, per
+// the lab's grouping convention:
+//   Total/Extractable K, Ca, Mg, Na                                -> ICP-A
+//   Total/Extractable Zn, Mn, Cu, S, Fe, Si, Al, Pb, As, Hg, Cr     -> ICP-B
+const ICP_ELEMENT_GROUP = {
+  k: "A", ca: "A", mg: "A", na: "A",
+  zn: "B", mn: "B", cu: "B", s: "B", fe: "B", si: "B", al: "B", pb: "B", as: "B", hg: "B", cr: "B",
+};
+
+// Collapses any "Total <element>" / "Extractable <element>" bullet whose
+// element is in ICP_ELEMENT_GROUP into a single "<Prefix> ICP-<A|B>" entry
+// (even if only one such element was present), keeping everything else
+// (and original ordering) untouched.
+function groupICPParameters(params) {
+  const seen = new Set();
+  const result = [];
+  for (const raw of params) {
+    const m = raw.match(/^(Total|Extractable)\s+([A-Za-z]+)$/i);
+    const group = m ? ICP_ELEMENT_GROUP[m[2].toLowerCase()] : null;
+    if (m && group) {
+      const prefix = m[1][0].toUpperCase() + m[1].slice(1).toLowerCase();
+      const label = `${prefix} ICP-${group}`;
+      if (!seen.has(label)) {
+        seen.add(label);
+        result.push(label);
+      }
+      continue;
+    }
+    result.push(raw);
+  }
+  return result;
+}
+
 // Parses text pasted from a "ใบแจกจ่ายงานวิเคราะห์ / ข้อมูลทะเบียนและรายชื่อ" document
 // (or similar job-order sheet) and pulls out the job number, parameter list,
 // and individual sample registration numbers/names it can recognize.
@@ -78,9 +112,10 @@ function parseImportText(text) {
   const jobNoMatch = norm.match(/\b([A-Za-z]{1,5}\d{2}-\d{3,7})\b/);
   const jobNo = jobNoMatch ? jobNoMatch[1].toUpperCase() : "";
 
-  const parameters = [...norm.matchAll(/^[•·][ \t]*(.+?)[ \t]*$/gm)]
+  const rawParameters = [...norm.matchAll(/^[•·][ \t]*(.+?)[ \t]*$/gm)]
     .map((m) => m[1].trim())
     .filter(Boolean);
+  const parameters = groupICPParameters(rawParameters);
 
   let sampleType = "";
   const typeMatch = norm.match(/ประเภทตัวอย[่]?าง[^\n]*\n[ \t]*([^\n]+)/);
@@ -106,29 +141,24 @@ function parseImportText(text) {
   const receivedDate = dates[0] || "";
   const dueDate = dates[1] || "";
 
-  // Rows like "05486   ถุงบรรจุ 500 g D240" (registration number + sample name)
-  const sampleMap = {};
-  for (const m of norm.matchAll(/^(\d{5})[ \t]+([^\n\d][^\n]*)$/gm)) {
-    sampleMap[m[1]] = m[2].trim();
-  }
-  // Standalone registration numbers with no name given
-  for (const m of norm.matchAll(/^(\d{5})[ \t]*$/gm)) {
-    if (!(m[1] in sampleMap)) sampleMap[m[1]] = "";
-  }
-  let samples = Object.entries(sampleMap).map(([code, name]) => ({ code, name }));
-  if (samples.length === 0 && rangeStart && rangeEnd) {
-    const start = parseInt(rangeStart, 10);
-    const end = parseInt(rangeEnd, 10);
-    const width = rangeStart.length;
-    if (end >= start && end - start < 500) {
-      for (let n = start; n <= end; n++) samples.push({ code: String(n).padStart(width, "0"), name: "" });
-    }
-  }
-  samples.sort((a, b) => a.code.localeCompare(b.code));
+  // Individual sub-sample / registration-number rows are intentionally NOT
+  // parsed into a per-sample list — imports should only surface the sample
+  // count and the registration-number range, not every single sub-sample line.
+  const samples = [];
 
-  const sampleSummary = [sampleType, rangeStart && rangeEnd ? `${rangeStart}-${rangeEnd}` : "", totalSamples ? `${totalSamples} ตัวอย่าง` : ""]
+  // Prefer an explicit "N ตัวอย่าง" count from the document; otherwise derive
+  // it from the registration-number range (end - start + 1).
+  const rangeCount =
+    rangeStart && rangeEnd ? parseInt(rangeEnd, 10) - parseInt(rangeStart, 10) + 1 : null;
+  const sampleCount = totalSamples || rangeCount;
+
+  // e.g. "60 ตัวอย่าง เลข 005-064"
+  const sampleSummary = [
+    sampleCount ? `${sampleCount} ตัวอย่าง` : "",
+    rangeStart && rangeEnd ? `เลข ${rangeStart}-${rangeEnd}` : "",
+  ]
     .filter(Boolean)
-    .join(" · ");
+    .join(" ");
 
   return { jobNo, parameters, samples, sampleSummary, receivedDate, dueDate };
 }
@@ -432,7 +462,7 @@ function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, knownAnalysts
 
   const handleParseImport = () => {
     const parsed = parseImportText(importText);
-    const foundAnything = parsed.jobNo || parsed.parameters.length > 0 || parsed.samples.length > 0;
+    const foundAnything = parsed.jobNo || parsed.parameters.length > 0 || parsed.sampleSummary;
     if (!foundAnything) {
       setImportInfo({ ok: false, msg: "ไม่พบรหัสงาน/พารามิเตอร์/ตัวอย่างในข้อความนี้ ลองวางข้อความทั้งหมดจากเอกสารอีกครั้ง" });
       return;
@@ -442,13 +472,12 @@ function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, knownAnalysts
     if (parsed.parameters.length > 0) {
       setRows(parsed.parameters.map((name) => ({ id: uid(), name, analyst: lastAnalystByParam[name.trim()] || "" })));
     }
-    if (parsed.samples.length > 0) {
-      setSubsamples(parsed.samples.map((s) => ({ id: uid(), code: s.code, name: s.name })));
-    }
+    // Sub-sample rows are no longer auto-filled from import — only the
+    // sample-count / registration-number summary above is used.
     if (!isEdit && parsed.receivedDate) setReceivedTs(thaiDateToTs(parsed.receivedDate));
     setImportInfo({
       ok: true,
-      msg: `นำเข้าแล้ว — พารามิเตอร์ ${parsed.parameters.length} รายการ, ตัวอย่าง ${parsed.samples.length} รายการ ตรวจสอบและแก้ไขเพิ่มเติมได้ตามต้องการ`,
+      msg: `นำเข้าแล้ว — พารามิเตอร์ ${parsed.parameters.length} รายการ${parsed.sampleSummary ? `, ตัวอย่าง: ${parsed.sampleSummary}` : ""} ตรวจสอบและแก้ไขเพิ่มเติมได้ตามต้องการ`,
     });
   };
 
