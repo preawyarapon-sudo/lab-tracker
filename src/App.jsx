@@ -25,6 +25,7 @@ const C = {
 };
 
 const STATUS = { WAIT: "Waiting", RUN: "Running", DONE: "Complete" };
+const SAMPLE_TYPES = ["ดิน", "น้ำ", "ปุ๋ย", "พืช", "อ้อย/น้ำตาล/กากน้ำตาล", "อื่นๆ"];
 
 function nowHM() {
   return new Date().toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit", hour12: false });
@@ -225,7 +226,7 @@ function subscribeJobs(callback, onError) {
     (snapshot) => {
       const val = snapshot.val() || {};
       const jobs = Object.values(val);
-      jobs.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      jobs.sort((a, b) => (b.jobNo || "").localeCompare(a.jobNo || "", undefined, { numeric: true }));
       callback(jobs);
     },
     (err) => onError && onError(err)
@@ -238,14 +239,20 @@ async function deleteJobStorage(jobNo) {
   await remove(ref(db, `jobs/${jobNo}`));
 }
 
-// ---------- New Job Form ----------
-function NewJobForm({ onCancel, onCreate, suggestedNo, knownAnalysts, knownParams }) {
-  const [jobNo, setJobNo] = useState(suggestedNo);
-  const [sample, setSample] = useState("");
-  const [rows, setRows] = useState([
-    { id: uid(), name: "", analyst: "" },
-    { id: uid(), name: "", analyst: "" },
-  ]);
+// ---------- New / Edit Job Form ----------
+function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, knownAnalysts, knownParams, editingJob }) {
+  const isEdit = !!editingJob;
+  const [jobNo] = useState(isEdit ? editingJob.jobNo : suggestedNo);
+  const [sample, setSample] = useState(isEdit ? editingJob.sample || "" : "");
+  const [sampleType, setSampleType] = useState(isEdit ? editingJob.sampleType || SAMPLE_TYPES[0] : SAMPLE_TYPES[0]);
+  const [rows, setRows] = useState(
+    isEdit
+      ? editingJob.parameters.map((p) => ({ id: p.id, name: p.name, analyst: p.analyst || "" }))
+      : [
+          { id: uid(), name: "", analyst: "" },
+          { id: uid(), name: "", analyst: "" },
+        ]
+  );
 
   const updateRow = (id, field, val) => {
     setRows((rs) => rs.map((r) => (r.id === id ? { ...r, [field]: val } : r)));
@@ -256,20 +263,46 @@ function NewJobForm({ onCancel, onCreate, suggestedNo, knownAnalysts, knownParam
   const canSubmit = jobNo.trim() && rows.some((r) => r.name.trim());
 
   const submit = () => {
-    const parameters = rows
-      .filter((r) => r.name.trim())
-      .map((r) => ({
-        id: uid(),
-        name: r.name.trim(),
-        analyst: r.analyst.trim(),
-        status: STATUS.WAIT,
-        start: null,
-        finish: null,
-        startTs: null,
-        updatedTs: nowTS(),
-        updatedLabel: nowHM(),
-      }));
-    onCreate({ jobNo: jobNo.trim(), sample: sample.trim(), createdAt: nowTS(), parameters });
+    if (isEdit) {
+      const existingById = Object.fromEntries(editingJob.parameters.map((p) => [p.id, p]));
+      const parameters = rows
+        .filter((r) => r.name.trim())
+        .map((r) => {
+          const prev = existingById[r.id];
+          if (prev) {
+            // keep status/timestamps of parameters that already existed; just update name/analyst
+            return { ...prev, name: r.name.trim(), analyst: r.analyst.trim() };
+          }
+          // brand-new row added during edit
+          return {
+            id: r.id,
+            name: r.name.trim(),
+            analyst: r.analyst.trim(),
+            status: STATUS.WAIT,
+            start: null,
+            finish: null,
+            startTs: null,
+            updatedTs: nowTS(),
+            updatedLabel: nowHM(),
+          };
+        });
+      onSaveEdit({ ...editingJob, sample: sample.trim(), sampleType, parameters });
+    } else {
+      const parameters = rows
+        .filter((r) => r.name.trim())
+        .map((r) => ({
+          id: uid(),
+          name: r.name.trim(),
+          analyst: r.analyst.trim(),
+          status: STATUS.WAIT,
+          start: null,
+          finish: null,
+          startTs: null,
+          updatedTs: nowTS(),
+          updatedLabel: nowHM(),
+        }));
+      onCreate({ jobNo: jobNo.trim(), sample: sample.trim(), sampleType, createdAt: nowTS(), parameters });
+    }
   };
 
   const inputStyle = {
@@ -283,27 +316,34 @@ function NewJobForm({ onCancel, onCreate, suggestedNo, knownAnalysts, knownParam
     width: "100%",
     outline: "none",
   };
+  const selectStyle = { ...inputStyle, appearance: "auto" };
 
   return (
     <Panel style={{ padding: 18, marginBottom: 20 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: C.text, display: "flex", alignItems: "center", gap: 8 }}>
           <FlaskConical size={16} color={C.cyan} />
-          สร้างรหัสงานใหม่
+          {isEdit ? `แก้ไขรหัสงาน ${editingJob.jobNo}` : "สร้างรหัสงานใหม่"}
         </div>
         <button onClick={onCancel} style={{ background: "none", border: "none", cursor: "pointer", color: C.textMuted }}>
           <X size={18} />
         </button>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
         <div>
           <label style={{ fontSize: 11, color: C.textMuted, display: "block", marginBottom: 4 }}>รหัสงาน (Job No)</label>
-          <input style={{ ...inputStyle, fontFamily: "monospace" }} value={jobNo} onChange={(e) => setJobNo(e.target.value)} />
+          <input style={{ ...inputStyle, fontFamily: "monospace", opacity: isEdit ? 0.6 : 1 }} value={jobNo} disabled={isEdit} readOnly />
         </div>
         <div>
           <label style={{ fontSize: 11, color: C.textMuted, display: "block", marginBottom: 4 }}>ตัวอย่าง (Sample)</label>
           <input style={inputStyle} value={sample} onChange={(e) => setSample(e.target.value)} placeholder="Soil-01" />
+        </div>
+        <div>
+          <label style={{ fontSize: 11, color: C.textMuted, display: "block", marginBottom: 4 }}>ประเภทตัวอย่าง</label>
+          <select style={selectStyle} value={sampleType} onChange={(e) => setSampleType(e.target.value)}>
+            {SAMPLE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
         </div>
       </div>
 
@@ -332,7 +372,7 @@ function NewJobForm({ onCancel, onCreate, suggestedNo, knownAnalysts, knownParam
         <Btn small onClick={addRow}><Plus size={14} /> เพิ่มพารามิเตอร์</Btn>
         <div style={{ display: "flex", gap: 8 }}>
           <Btn onClick={onCancel}>ยกเลิก</Btn>
-          <Btn kind="primary" onClick={submit} disabled={!canSubmit}>บันทึกรหัสงาน</Btn>
+          <Btn kind="primary" onClick={submit} disabled={!canSubmit}>{isEdit ? "บันทึกการแก้ไข" : "บันทึกรหัสงาน"}</Btn>
         </div>
       </div>
     </Panel>
@@ -340,7 +380,7 @@ function NewJobForm({ onCancel, onCreate, suggestedNo, knownAnalysts, knownParam
 }
 
 // ---------- Job Detail ----------
-function JobDetail({ job, onBack, onUpdateParam, onDeleteJob }) {
+function JobDetail({ job, onBack, onUpdateParam, onDeleteJob, onEditJob }) {
   const stats = computeJobStats(job);
   return (
     <Panel style={{ padding: 18 }}>
@@ -350,8 +390,9 @@ function JobDetail({ job, onBack, onUpdateParam, onDeleteJob }) {
             ‹ กลับไปที่รายการรหัสงาน
           </button>
           <div style={{ fontSize: 20, fontWeight: 700, fontFamily: "monospace", color: C.text, letterSpacing: 0.5 }}>{job.jobNo}</div>
-          <div style={{ fontSize: 13, color: C.textMuted, marginTop: 2 }}>
+          <div style={{ fontSize: 13, color: C.textMuted, marginTop: 2, display: "flex", alignItems: "center", gap: 8 }}>
             {job.sample || "-"}
+            {job.sampleType && <Badge color={C.cyan} bg={C.cyanDim}>{job.sampleType}</Badge>}
           </div>
         </div>
         <div style={{ textAlign: "right" }}>
@@ -402,7 +443,8 @@ function JobDetail({ job, onBack, onUpdateParam, onDeleteJob }) {
         </table>
       </div>
 
-      <div style={{ marginTop: 18, display: "flex", justifyContent: "flex-end" }}>
+      <div style={{ marginTop: 18, display: "flex", justifyContent: "flex-end", gap: 8 }}>
+        <Btn small onClick={() => onEditJob(job)}>แก้ไขรหัสงานนี้</Btn>
         <Btn kind="danger" small onClick={() => onDeleteJob(job.jobNo)}><Trash2 size={13} /> ลบรหัสงานนี้</Btn>
       </div>
     </Panel>
@@ -417,7 +459,7 @@ function JobsList({ jobs, onOpen }) {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
             <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-              {["Job No", "Sample", "Params", "Complete", "Progress", "Status", ""].map((h) => (
+              {["Job No", "Sample", "Type", "Params", "Complete", "Progress", "Status", ""].map((h) => (
                 <th key={h} style={{ textAlign: "left", padding: "10px 12px", color: C.textMuted, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 600 }}>{h}</th>
               ))}
             </tr>
@@ -432,6 +474,9 @@ function JobsList({ jobs, onOpen }) {
                 >
                   <td style={{ padding: "10px 12px", fontFamily: "monospace", fontWeight: 700, color: C.cyan }}>{job.jobNo}</td>
                   <td style={{ padding: "10px 12px", color: C.text }}>{job.sample || "-"}</td>
+                  <td style={{ padding: "10px 12px" }}>
+                    {job.sampleType ? <Badge color={C.cyan} bg={C.cyanDim}>{job.sampleType}</Badge> : <span style={{ color: C.textFaint }}>-</span>}
+                  </td>
                   <td style={{ padding: "10px 12px", color: C.textMuted, fontFamily: "monospace" }}>{stats.total}</td>
                   <td style={{ padding: "10px 12px", color: C.textMuted, fontFamily: "monospace" }}>{stats.complete}</td>
                   <td style={{ padding: "10px 12px", width: 140 }}>
@@ -446,7 +491,7 @@ function JobsList({ jobs, onOpen }) {
               );
             })}
             {jobs.length === 0 && (
-              <tr><td colSpan={7} style={{ padding: 30, textAlign: "center", color: C.textFaint }}>ยังไม่มีรหัสงาน</td></tr>
+              <tr><td colSpan={8} style={{ padding: 30, textAlign: "center", color: C.textFaint }}>ยังไม่มีรหัสงาน</td></tr>
             )}
           </tbody>
         </table>
@@ -746,6 +791,7 @@ export default function App() {
   const [tab, setTab] = useState("dashboard");
   const [selected, setSelected] = useState(null);
   const [showForm, setShowForm] = useState(false);
+  const [editingJob, setEditingJob] = useState(null);
   const [error, setError] = useState(null);
 
   useEffect(() => {
@@ -783,6 +829,15 @@ export default function App() {
       await saveJob(job);
     } catch (e) {
       setError("บันทึกรหัสงานไม่สำเร็จ");
+    }
+  };
+
+  const handleSaveEdit = async (updatedJob) => {
+    setEditingJob(null);
+    try {
+      await saveJob(updatedJob);
+    } catch (e) {
+      setError("บันทึกการแก้ไขไม่สำเร็จ");
     }
   };
 
@@ -878,10 +933,19 @@ export default function App() {
                     knownParams={knownParams}
                   />
                 )}
-                {selectedJob ? (
-                  <JobDetail job={selectedJob} onBack={() => setSelected(null)} onUpdateParam={handleUpdateParam} onDeleteJob={handleDeleteJob} />
+                {editingJob && (
+                  <NewJobForm
+                    editingJob={editingJob}
+                    onCancel={() => setEditingJob(null)}
+                    onSaveEdit={handleSaveEdit}
+                    knownAnalysts={knownAnalysts}
+                    knownParams={knownParams}
+                  />
+                )}
+                {selectedJob && !editingJob ? (
+                  <JobDetail job={selectedJob} onBack={() => setSelected(null)} onUpdateParam={handleUpdateParam} onDeleteJob={handleDeleteJob} onEditJob={setEditingJob} />
                 ) : (
-                  <JobsList jobs={jobs} onOpen={openJob} />
+                  !editingJob && <JobsList jobs={jobs} onOpen={openJob} />
                 )}
               </>
             )}
