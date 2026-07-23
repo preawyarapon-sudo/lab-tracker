@@ -36,11 +36,24 @@ function nowTS() {
 function uid() {
   return Math.random().toString(36).slice(2, 10);
 }
-function genJobNo(existingCount) {
+// jobs are already sorted numerically descending (see subscribeJobs), so
+// jobs[0] is the latest job number actually used. We bump its trailing
+// number by 1, keeping the same prefix and zero-padding width.
+// Falls back to the old LAB{yy}{mm}{seq} scheme if there are no jobs yet.
+function genJobNo(jobs) {
+  if (jobs.length > 0) {
+    const latest = jobs[0].jobNo || "";
+    const match = latest.match(/^(.*?)(\d+)$/);
+    if (match) {
+      const [, prefix, digits] = match;
+      const next = String(parseInt(digits, 10) + 1).padStart(digits.length, "0");
+      return `${prefix}${next}`;
+    }
+  }
   const d = new Date();
   const yy = String(d.getFullYear() + 543).slice(-2);
   const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const seq = String(existingCount + 1).padStart(3, "0");
+  const seq = String(jobs.length + 1).padStart(3, "0");
   return `LAB${yy}${mm}${seq}`;
 }
 
@@ -240,11 +253,11 @@ async function deleteJobStorage(jobNo) {
 }
 
 // ---------- New / Edit Job Form ----------
-function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, knownAnalysts, knownParams, editingJob }) {
+function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, knownAnalysts, knownParams, knownSampleTypes, editingJob, existingJobNos = [] }) {
   const isEdit = !!editingJob;
-  const [jobNo] = useState(isEdit ? editingJob.jobNo : suggestedNo);
+  const [jobNo, setJobNo] = useState(isEdit ? editingJob.jobNo : suggestedNo);
   const [sample, setSample] = useState(isEdit ? editingJob.sample || "" : "");
-  const [sampleType, setSampleType] = useState(isEdit ? editingJob.sampleType || SAMPLE_TYPES[0] : SAMPLE_TYPES[0]);
+  const [sampleType, setSampleType] = useState(isEdit ? editingJob.sampleType || "" : "");
   const [rows, setRows] = useState(
     isEdit
       ? editingJob.parameters.map((p) => ({ id: p.id, name: p.name, analyst: p.analyst || "" }))
@@ -260,7 +273,8 @@ function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, knownAnalysts
   const addRow = () => setRows((rs) => [...rs, { id: uid(), name: "", analyst: "" }]);
   const removeRow = (id) => setRows((rs) => (rs.length > 1 ? rs.filter((r) => r.id !== id) : rs));
 
-  const canSubmit = jobNo.trim() && rows.some((r) => r.name.trim());
+  const isDuplicate = !isEdit && existingJobNos.includes(jobNo.trim());
+  const canSubmit = jobNo.trim() && rows.some((r) => r.name.trim()) && !isDuplicate;
 
   const submit = () => {
     if (isEdit) {
@@ -316,7 +330,6 @@ function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, knownAnalysts
     width: "100%",
     outline: "none",
   };
-  const selectStyle = { ...inputStyle, appearance: "auto" };
 
   return (
     <Panel style={{ padding: 18, marginBottom: 20 }}>
@@ -333,7 +346,16 @@ function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, knownAnalysts
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
         <div>
           <label style={{ fontSize: 11, color: C.textMuted, display: "block", marginBottom: 4 }}>รหัสงาน (Job No)</label>
-          <input style={{ ...inputStyle, fontFamily: "monospace", opacity: isEdit ? 0.6 : 1 }} value={jobNo} disabled={isEdit} readOnly />
+          <input
+            style={{ ...inputStyle, fontFamily: "monospace", opacity: isEdit ? 0.6 : 1 }}
+            value={jobNo}
+            onChange={(e) => setJobNo(e.target.value)}
+            disabled={isEdit}
+            readOnly={isEdit}
+          />
+          {isDuplicate && (
+            <div style={{ fontSize: 11, color: C.red, marginTop: 4 }}>รหัสงานนี้มีอยู่แล้ว กรุณาใช้เลขอื่น</div>
+          )}
         </div>
         <div>
           <label style={{ fontSize: 11, color: C.textMuted, display: "block", marginBottom: 4 }}>ตัวอย่าง (Sample)</label>
@@ -341,9 +363,16 @@ function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, knownAnalysts
         </div>
         <div>
           <label style={{ fontSize: 11, color: C.textMuted, display: "block", marginBottom: 4 }}>ประเภทตัวอย่าง</label>
-          <select style={selectStyle} value={sampleType} onChange={(e) => setSampleType(e.target.value)}>
-            {SAMPLE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-          </select>
+          <input
+            style={inputStyle}
+            list="sampletype-list"
+            value={sampleType}
+            onChange={(e) => setSampleType(e.target.value)}
+            placeholder="พิมพ์หรือเลือกประเภท เช่น ดิน"
+          />
+          <datalist id="sampletype-list">
+            {knownSampleTypes.map((t) => <option key={t} value={t} />)}
+          </datalist>
         </div>
       </div>
 
@@ -819,6 +848,10 @@ export default function App() {
   const analysts = useMemo(() => computeAnalysts(jobs), [jobs]);
   const knownAnalysts = useMemo(() => [...new Set(jobs.flatMap(j => j.parameters.map(p => p.analyst).filter(Boolean)))], [jobs]);
   const knownParams = useMemo(() => [...new Set(jobs.flatMap(j => j.parameters.map(p => p.name).filter(Boolean)))].sort((a, b) => a.localeCompare(b, "th")), [jobs]);
+  const knownSampleTypes = useMemo(
+    () => [...new Set([...SAMPLE_TYPES, ...jobs.map((j) => j.sampleType).filter(Boolean)])],
+    [jobs]
+  );
 
   // Note: we don't need to manually update local state after these calls —
   // the onValue subscription above fires as soon as Firebase confirms the
@@ -928,9 +961,11 @@ export default function App() {
                   <NewJobForm
                     onCancel={() => setShowForm(false)}
                     onCreate={handleCreate}
-                    suggestedNo={genJobNo(jobs.length)}
+                    suggestedNo={genJobNo(jobs)}
                     knownAnalysts={knownAnalysts}
                     knownParams={knownParams}
+                    knownSampleTypes={knownSampleTypes}
+                    existingJobNos={jobs.map((j) => j.jobNo)}
                   />
                 )}
                 {editingJob && (
@@ -940,6 +975,7 @@ export default function App() {
                     onSaveEdit={handleSaveEdit}
                     knownAnalysts={knownAnalysts}
                     knownParams={knownParams}
+                    knownSampleTypes={knownSampleTypes}
                   />
                 )}
                 {selectedJob && !editingJob ? (
