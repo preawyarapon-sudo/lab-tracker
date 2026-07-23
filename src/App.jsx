@@ -183,6 +183,43 @@ function genJobNo(jobs) {
   return `LAB${yy}${mm}${seq}`;
 }
 
+// Parses a registration number string like "05171" into its numeric value
+// and zero-padded width (so we can keep the same digit-count when we
+// generate the next range, e.g. "00099" -> width 5, not just "99").
+function parseRegNo(str) {
+  const m = (str || "").trim().match(/^(\d+)$/);
+  return m ? { num: parseInt(m[1], 10), width: m[1].length } : null;
+}
+// Given a starting registration number and a sample count, returns the
+// ending registration number (start + count - 1), zero-padded to match
+// the width of the start value.
+function computeRegEnd(start, count) {
+  const p = parseRegNo(start);
+  const n = parseInt(count, 10);
+  if (!p || !n || n < 1) return "";
+  return String(p.num + n - 1).padStart(p.width, "0");
+}
+// Finds the highest registration number used across all existing jobs
+// (checking both the new regStart/regEnd fields and, for backward
+// compatibility, any old per-sample "samples" arrays) and returns the
+// next number after it, zero-padded to match the width of whatever was
+// found. Returns "" if no registration numbers exist yet anywhere.
+function nextRegStart(jobs) {
+  let max = null;
+  for (const job of jobs) {
+    const candidates = [];
+    if (job.regEnd) candidates.push(job.regEnd);
+    else if (job.regStart) candidates.push(job.regStart);
+    if (job.samples) for (const s of job.samples) if (s.code) candidates.push(s.code);
+    for (const c of candidates) {
+      const p = parseRegNo(c);
+      if (p && (!max || p.num > max.num)) max = p;
+    }
+  }
+  if (!max) return "";
+  return String(max.num + 1).padStart(max.width, "0");
+}
+
 function statColor(status) {
   if (status === STATUS.DONE) return C.green;
   if (status === STATUS.RUN) return C.amber;
@@ -411,7 +448,7 @@ async function deleteJobStorage(jobNo) {
 }
 
 // ---------- New / Edit Job Form ----------
-function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, knownAnalysts, knownParams, knownSamples, editingJob, existingJobNos = [], lastAnalystByParam = {} }) {
+function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, suggestedRegStart = "", knownAnalysts, knownParams, knownSamples, editingJob, existingJobNos = [], lastAnalystByParam = {} }) {
   const isEdit = !!editingJob;
   const [jobNo, setJobNo] = useState(isEdit ? editingJob.jobNo : suggestedNo);
   const [sample, setSample] = useState(isEdit ? editingJob.sample || "" : "");
@@ -443,15 +480,34 @@ function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, knownAnalysts
   const addRow = () => setRows((rs) => [...rs, { id: uid(), name: "", analyst: "" }]);
   const removeRow = (id) => setRows((rs) => (rs.length > 1 ? rs.filter((r) => r.id !== id) : rs));
 
-  // Individual sample registration numbers under this job (optional — only
-  // shown/used when the job actually has sub-samples, e.g. imported from a
-  // lab job-order document).
-  const [subsamples, setSubsamples] = useState(
-    isEdit && editingJob.samples ? editingJob.samples.map((s) => ({ id: uid(), code: s.code, name: s.name || "" })) : []
+  // Sample count + registration-number range for this job (e.g. 60 samples,
+  // เลขทะเบียน 05171-05230). Auto-generated from the latest registration
+  // number used across all jobs, but fully editable by hand.
+  // Backward compatibility: older jobs may only have an old per-sample
+  // "samples" array (no regStart/regEnd/sampleCount) — derive from that.
+  const legacySamples = isEdit && !editingJob.regStart && editingJob.samples && editingJob.samples.length > 0 ? editingJob.samples : null;
+  const [regCount, setRegCount] = useState(
+    isEdit ? editingJob.sampleCount ?? (legacySamples ? legacySamples.length : "") : ""
   );
-  const updateSubsample = (id, field, val) => setSubsamples((ss) => ss.map((s) => (s.id === id ? { ...s, [field]: val } : s)));
-  const addSubsample = () => setSubsamples((ss) => [...ss, { id: uid(), code: "", name: "" }]);
-  const removeSubsample = (id) => setSubsamples((ss) => ss.filter((s) => s.id !== id));
+  const [regStart, setRegStart] = useState(
+    isEdit ? editingJob.regStart || (legacySamples ? legacySamples[0].code : "") : suggestedRegStart
+  );
+  const [regEnd, setRegEnd] = useState(
+    isEdit
+      ? editingJob.regEnd || (legacySamples ? legacySamples[legacySamples.length - 1].code : "")
+      : computeRegEnd(suggestedRegStart, "")
+  );
+  const handleRegCountChange = (val) => {
+    const cleaned = val.replace(/[^\d]/g, "");
+    const n = cleaned === "" ? "" : parseInt(cleaned, 10);
+    setRegCount(n);
+    setRegEnd(computeRegEnd(regStart, n));
+  };
+  const handleRegStartChange = (val) => {
+    setRegStart(val);
+    setRegEnd(computeRegEnd(val, regCount));
+  };
+  const handleRegEndChange = (val) => setRegEnd(val);
 
   // "Import from document" panel: paste raw text copied from a job-order
   // sheet (PDF/Word) and auto-fill job no / parameters / samples from it.
@@ -472,8 +528,21 @@ function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, knownAnalysts
     if (parsed.parameters.length > 0) {
       setRows(parsed.parameters.map((name) => ({ id: uid(), name, analyst: lastAnalystByParam[name.trim()] || "" })));
     }
-    // Sub-sample rows are no longer auto-filled from import — only the
-    // sample-count / registration-number summary above is used.
+    // Prefill the sample count / registration-number range from the
+    // document when found; otherwise leave the current values as-is so an
+    // existing auto-suggested/manually-edited range isn't clobbered.
+    let nextStart = regStart;
+    let nextCount = regCount;
+    const rangeMatch = importText.match(/(\d{4,7})[ \t]*-[ \t]*(\d{4,7})/);
+    if (rangeMatch) nextStart = rangeMatch[1];
+    const countMatch = importText.match(/(\d+)[ \t]*ตัวอย[่]?าง[่]?/);
+    if (countMatch) nextCount = parseInt(countMatch[1], 10);
+    else if (rangeMatch) nextCount = parseInt(rangeMatch[2], 10) - parseInt(rangeMatch[1], 10) + 1;
+    if (rangeMatch || countMatch) {
+      setRegStart(nextStart);
+      setRegCount(nextCount);
+      setRegEnd(rangeMatch ? rangeMatch[2] : computeRegEnd(nextStart, nextCount));
+    }
     if (!isEdit && parsed.receivedDate) setReceivedTs(thaiDateToTs(parsed.receivedDate));
     setImportInfo({
       ok: true,
@@ -518,11 +587,14 @@ function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, knownAnalysts
             updatedLabel: nowHM(),
           };
         });
+      const { samples: _legacySamples, ...restEditingJob } = editingJob;
       onSaveEdit({
-        ...editingJob,
+        ...restEditingJob,
         sample: sample.trim(),
         parameters,
-        samples: subsamples.filter((s) => s.code.trim()).map((s) => ({ code: s.code.trim(), name: s.name.trim() })),
+        regStart: regStart.trim(),
+        regEnd: regEnd.trim(),
+        sampleCount: regCount || 0,
       });
     } else {
       const parameters = rows
@@ -543,7 +615,9 @@ function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, knownAnalysts
         sample: sample.trim(),
         createdAt: receivedTs || nowTS(),
         parameters,
-        samples: subsamples.filter((s) => s.code.trim()).map((s) => ({ code: s.code.trim(), name: s.name.trim() })),
+        regStart: regStart.trim(),
+        regEnd: regEnd.trim(),
+        sampleCount: regCount || 0,
       });
     }
   };
@@ -658,25 +732,45 @@ function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, knownAnalysts
       </div>
 
       <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>
-        ตัวอย่างย่อย / เลขทะเบียน ({subsamples.length})
+        จำนวนตัวอย่าง / เลขทะเบียน
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
-        {subsamples.map((s, i) => (
-          <div key={s.id} style={{ display: "grid", gridTemplateColumns: "20px 1fr 2fr 26px", gap: 8, alignItems: "center" }}>
-            <div style={{ fontSize: 11, color: C.textFaint, fontFamily: "monospace" }}>{i + 1}</div>
-            <input style={{ ...inputStyle, fontFamily: "monospace" }} placeholder="เลขทะเบียน เช่น 05486" value={s.code} onChange={(e) => updateSubsample(s.id, "code", e.target.value)} />
-            <input style={inputStyle} placeholder="ชื่อตัวอย่าง (ถ้ามี)" value={s.name} onChange={(e) => updateSubsample(s.id, "name", e.target.value)} />
-            <button onClick={() => removeSubsample(s.id)} style={{ background: "none", border: "none", cursor: "pointer", color: C.textFaint }}>
-              <Trash2 size={15} />
-            </button>
-          </div>
-        ))}
-        {subsamples.length === 0 && (
-          <div style={{ fontSize: 12, color: C.textFaint }}>ไม่มีตัวอย่างย่อย (ไม่จำเป็นถ้างานนี้มีตัวอย่างเดียว)</div>
-        )}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 6 }}>
+        <div>
+          <label style={{ fontSize: 11, color: C.textMuted, display: "block", marginBottom: 4 }}>จำนวนตัวอย่าง</label>
+          <input
+            style={{ ...inputStyle, fontFamily: "monospace" }}
+            placeholder="เช่น 60"
+            inputMode="numeric"
+            value={regCount}
+            onChange={(e) => handleRegCountChange(e.target.value)}
+          />
+        </div>
+        <div>
+          <label style={{ fontSize: 11, color: C.textMuted, display: "block", marginBottom: 4 }}>เลขทะเบียนเริ่มต้น</label>
+          <input
+            style={{ ...inputStyle, fontFamily: "monospace" }}
+            placeholder="เช่น 05171"
+            value={regStart}
+            onChange={(e) => handleRegStartChange(e.target.value)}
+          />
+        </div>
+        <div>
+          <label style={{ fontSize: 11, color: C.textMuted, display: "block", marginBottom: 4 }}>เลขทะเบียนสิ้นสุด</label>
+          <input
+            style={{ ...inputStyle, fontFamily: "monospace" }}
+            placeholder="คำนวณอัตโนมัติ"
+            value={regEnd}
+            onChange={(e) => handleRegEndChange(e.target.value)}
+          />
+        </div>
       </div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <Btn small onClick={addSubsample}><Plus size={14} /> เพิ่มตัวอย่างย่อย</Btn>
+      {regStart && regEnd && (
+        <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 14, fontFamily: "monospace" }}>
+          เลขทะเบียน {regStart} - {regEnd}
+        </div>
+      )}
+
+      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", marginTop: 14 }}>
         <div style={{ display: "flex", gap: 8 }}>
           <Btn onClick={onCancel}>ยกเลิก</Btn>
           <Btn kind="primary" onClick={submit} disabled={!canSubmit}>{isEdit ? "บันทึกการแก้ไข" : "บันทึกรหัสงาน"}</Btn>
@@ -718,7 +812,16 @@ function JobDetail({ job, onBack, onUpdateParam, onDeleteJob, onEditJob }) {
         <LedBar parameters={job.parameters} />
       </div>
 
-      {job.samples && job.samples.length > 0 && (
+      {(job.regStart || job.regEnd) ? (
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>
+            จำนวนตัวอย่าง{job.sampleCount ? ` (${job.sampleCount})` : ""}
+          </div>
+          <div style={{ display: "inline-block", background: C.panel2, border: `1px solid ${C.borderSoft}`, borderRadius: 5, padding: "5px 10px", fontSize: 13, fontFamily: "monospace", fontWeight: 700, color: C.cyan }}>
+            {job.regStart}{job.regEnd && job.regEnd !== job.regStart ? ` - ${job.regEnd}` : ""}
+          </div>
+        </div>
+      ) : job.samples && job.samples.length > 0 && (
         <div style={{ marginBottom: 18 }}>
           <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>
             ตัวอย่างย่อย ({job.samples.length})
@@ -1157,6 +1260,7 @@ export default function App() {
     [jobs]
   );
   const lastAnalystByParam = useMemo(() => computeLastAnalystByParam(jobs), [jobs]);
+  const suggestedRegStart = useMemo(() => nextRegStart(jobs), [jobs]);
 
   // Note: we don't need to manually update local state after these calls —
   // the onValue subscription above fires as soon as Firebase confirms the
@@ -1267,6 +1371,7 @@ export default function App() {
                     onCancel={() => setShowForm(false)}
                     onCreate={handleCreate}
                     suggestedNo={genJobNo(jobs)}
+                    suggestedRegStart={suggestedRegStart}
                     knownAnalysts={knownAnalysts}
                     knownParams={knownParams}
                     knownSamples={knownSamples}
