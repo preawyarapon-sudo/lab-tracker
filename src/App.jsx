@@ -35,6 +35,29 @@ function nowTS() {
 function uid() {
   return Math.random().toString(36).slice(2, 10);
 }
+const DAY_MS = 24 * 60 * 60 * 1000;
+const WARN_DAYS = 10; // แจ้งเตือนเมื่อใกล้ครบกำหนด
+const LATE_DAYS = 15; // ถือว่าล่าช้าเมื่อครบกำหนดนี้
+
+function daysSince(ts) {
+  if (!ts) return 0;
+  return Math.floor((nowTS() - ts) / DAY_MS);
+}
+// Thai date, e.g. 23 ก.ค. 2569 (พ.ศ.)
+function fmtDate(ts) {
+  if (!ts) return "-";
+  return new Date(ts).toLocaleDateString("th-TH", { day: "2-digit", month: "short", year: "numeric" });
+}
+// Deadline urgency for a job, based on days since creation.
+// Only meaningful while the job isn't fully complete.
+function deadlineInfo(job) {
+  const days = daysSince(job.createdAt);
+  const done = computeJobStats(job).status === STATUS.DONE;
+  if (done) return { level: "done", days };
+  if (days >= LATE_DAYS) return { level: "late", days };
+  if (days >= WARN_DAYS) return { level: "warn", days };
+  return { level: "ok", days };
+}
 // jobs are already sorted numerically descending (see subscribeJobs), so
 // jobs[0] is the latest job number actually used. We bump its trailing
 // number by 1, keeping the same prefix and zero-padding width.
@@ -182,6 +205,16 @@ function StatusBadge({ status }) {
   if (status === STATUS.DONE) return <Badge color={C.green} bg={C.greenDim}>Complete</Badge>;
   if (status === STATUS.RUN) return <Badge color={C.amber} bg={C.amberDim}>Running</Badge>;
   return <Badge color={C.textMuted} bg={C.panel2}>Waiting</Badge>;
+}
+
+// Shows how many days a job has been open, colored by deadline urgency:
+// < 10 days = normal, 10-14 days = amber warning, 15+ days = red "late".
+function DeadlineBadge({ job }) {
+  const { level, days } = deadlineInfo(job);
+  if (level === "done") return null;
+  if (level === "late") return <Badge color={C.red} bg={C.redDim}>ล่าช้า {days} วัน</Badge>;
+  if (level === "warn") return <Badge color={C.amber} bg={C.amberDim}>ใกล้ครบกำหนด {days} วัน</Badge>;
+  return <span style={{ fontSize: 11, color: C.textFaint, fontFamily: "monospace" }}>{days} วัน</span>;
 }
 
 function Btn({ children, onClick, kind = "default", small, disabled, title }) {
@@ -417,9 +450,15 @@ function JobDetail({ job, onBack, onUpdateParam, onDeleteJob, onEditJob }) {
           <div style={{ fontSize: 13, color: C.textMuted, marginTop: 2 }}>
             {job.sample || "-"}
           </div>
+          <div style={{ fontSize: 12, color: C.textFaint, marginTop: 4 }}>
+            สร้างเมื่อ {fmtDate(job.createdAt)}
+          </div>
         </div>
         <div style={{ textAlign: "right" }}>
-          <StatusBadge status={stats.status} />
+          <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", marginBottom: 6 }}>
+            <StatusBadge status={stats.status} />
+            <DeadlineBadge job={job} />
+          </div>
           <div style={{ fontSize: 22, fontWeight: 700, color: C.text, marginTop: 6, fontFamily: "monospace" }}>{stats.progress}%</div>
           <div style={{ fontSize: 11, color: C.textMuted }}>{stats.complete} / {stats.total} parameters</div>
         </div>
@@ -482,7 +521,7 @@ function JobsList({ jobs, onOpen }) {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
             <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-              {["Job No", "Sample", "Params", "Complete", "Progress", "Status", ""].map((h) => (
+              {["Job No", "Sample", "Created", "Params", "Complete", "Progress", "Status", "Deadline", ""].map((h) => (
                 <th key={h} style={{ textAlign: "left", padding: "10px 12px", color: C.textMuted, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 600 }}>{h}</th>
               ))}
             </tr>
@@ -497,6 +536,7 @@ function JobsList({ jobs, onOpen }) {
                 >
                   <td style={{ padding: "10px 12px", fontFamily: "monospace", fontWeight: 700, color: C.cyan }}>{job.jobNo}</td>
                   <td style={{ padding: "10px 12px", color: C.text }}>{job.sample || "-"}</td>
+                  <td style={{ padding: "10px 12px", color: C.textMuted, fontFamily: "monospace", whiteSpace: "nowrap" }}>{fmtDate(job.createdAt)}</td>
                   <td style={{ padding: "10px 12px", color: C.textMuted, fontFamily: "monospace" }}>{stats.total}</td>
                   <td style={{ padding: "10px 12px", color: C.textMuted, fontFamily: "monospace" }}>{stats.complete}</td>
                   <td style={{ padding: "10px 12px", width: 140 }}>
@@ -506,12 +546,13 @@ function JobsList({ jobs, onOpen }) {
                     </div>
                   </td>
                   <td style={{ padding: "10px 12px" }}><StatusBadge status={stats.status} /></td>
+                  <td style={{ padding: "10px 12px" }}><DeadlineBadge job={job} /></td>
                   <td style={{ padding: "10px 12px" }}><ChevronRight size={15} color={C.textFaint} /></td>
                 </tr>
               );
             })}
             {jobs.length === 0 && (
-              <tr><td colSpan={7} style={{ padding: 30, textAlign: "center", color: C.textFaint }}>ยังไม่มีรหัสงาน</td></tr>
+              <tr><td colSpan={9} style={{ padding: 30, textAlign: "center", color: C.textFaint }}>ยังไม่มีรหัสงาน</td></tr>
             )}
           </tbody>
         </table>
@@ -738,6 +779,7 @@ function Dashboard({ jobs, analysts, onOpen }) {
   const complete = allParams.filter((p) => p.status === STATUS.DONE).length;
   const pending = allParams.filter((p) => p.status === STATUS.WAIT).length;
   const activeJobs = jobs.filter((j) => computeJobStats(j).status !== STATUS.DONE);
+  const lateJobs = activeJobs.filter((j) => deadlineInfo(j).level === "late").length;
 
   const metric = (label, value, color) => (
     <div style={{ flex: 1, background: C.panel2, borderRadius: 6, padding: "14px 16px" }}>
@@ -753,6 +795,7 @@ function Dashboard({ jobs, analysts, onOpen }) {
         {metric("Running Params", running, C.amber)}
         {metric("Completed Params", complete, C.green)}
         {metric("Pending Params", pending, C.textMuted)}
+        {metric("ล่าช้า (15+ วัน)", lateJobs, C.red)}
       </div>
 
       <Panel style={{ padding: 16 }}>
@@ -765,7 +808,11 @@ function Dashboard({ jobs, analysts, onOpen }) {
             return (
               <div key={job.jobNo} onClick={() => onOpen(job.jobNo)} style={{ cursor: "pointer", paddingBottom: 12, borderBottom: `1px solid ${C.borderSoft}` }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                  <span style={{ fontFamily: "monospace", fontWeight: 700, color: C.cyan, fontSize: 14 }}>{job.jobNo}</span>
+                  <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontFamily: "monospace", fontWeight: 700, color: C.cyan, fontSize: 14 }}>{job.jobNo}</span>
+                    <span style={{ fontSize: 11, color: C.textFaint }}>สร้าง {fmtDate(job.createdAt)}</span>
+                    <DeadlineBadge job={job} />
+                  </span>
                   <span style={{ fontFamily: "monospace", fontSize: 13, color: C.textMuted }}>{stats.progress}%</span>
                 </div>
                 <LedBar parameters={job.parameters} />
