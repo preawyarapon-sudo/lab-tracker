@@ -25,7 +25,6 @@ const C = {
 };
 
 const STATUS = { WAIT: "Waiting", RUN: "Running", DONE: "Complete" };
-const SAMPLE_TYPES = ["ดิน", "น้ำ", "ปุ๋ย", "พืช", "อ้อย/น้ำตาล/กากน้ำตาล", "อื่นๆ"];
 
 function nowHM() {
   return new Date().toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit", hour12: false });
@@ -253,11 +252,10 @@ async function deleteJobStorage(jobNo) {
 }
 
 // ---------- New / Edit Job Form ----------
-function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, knownAnalysts, knownParams, knownSampleTypes, editingJob, existingJobNos = [] }) {
+function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, knownAnalysts, knownParams, knownSamples, editingJob, existingJobNos = [] }) {
   const isEdit = !!editingJob;
   const [jobNo, setJobNo] = useState(isEdit ? editingJob.jobNo : suggestedNo);
   const [sample, setSample] = useState(isEdit ? editingJob.sample || "" : "");
-  const [sampleType, setSampleType] = useState(isEdit ? editingJob.sampleType || "" : "");
   const [rows, setRows] = useState(
     isEdit
       ? editingJob.parameters.map((p) => ({ id: p.id, name: p.name, analyst: p.analyst || "" }))
@@ -300,7 +298,7 @@ function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, knownAnalysts
             updatedLabel: nowHM(),
           };
         });
-      onSaveEdit({ ...editingJob, sample: sample.trim(), sampleType, parameters });
+      onSaveEdit({ ...editingJob, sample: sample.trim(), parameters });
     } else {
       const parameters = rows
         .filter((r) => r.name.trim())
@@ -315,7 +313,7 @@ function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, knownAnalysts
           updatedTs: nowTS(),
           updatedLabel: nowHM(),
         }));
-      onCreate({ jobNo: jobNo.trim(), sample: sample.trim(), sampleType, createdAt: nowTS(), parameters });
+      onCreate({ jobNo: jobNo.trim(), sample: sample.trim(), createdAt: nowTS(), parameters });
     }
   };
 
@@ -343,7 +341,7 @@ function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, knownAnalysts
         </button>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
         <div>
           <label style={{ fontSize: 11, color: C.textMuted, display: "block", marginBottom: 4 }}>รหัสงาน (Job No)</label>
           <input
@@ -359,22 +357,19 @@ function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, knownAnalysts
         </div>
         <div>
           <label style={{ fontSize: 11, color: C.textMuted, display: "block", marginBottom: 4 }}>ตัวอย่าง (Sample)</label>
-          <input style={inputStyle} value={sample} onChange={(e) => setSample(e.target.value)} placeholder="Soil-01" />
-        </div>
-        <div>
-          <label style={{ fontSize: 11, color: C.textMuted, display: "block", marginBottom: 4 }}>ประเภทตัวอย่าง</label>
           <input
             style={inputStyle}
-            list="sampletype-list"
-            value={sampleType}
-            onChange={(e) => setSampleType(e.target.value)}
-            placeholder="พิมพ์หรือเลือกประเภท เช่น ดิน"
+            list="sample-list"
+            value={sample}
+            onChange={(e) => setSample(e.target.value)}
+            placeholder="พิมพ์หรือเลือกตัวอย่าง เช่น Soil-01"
           />
-          <datalist id="sampletype-list">
-            {knownSampleTypes.map((t) => <option key={t} value={t} />)}
+          <datalist id="sample-list">
+            {knownSamples.map((s) => <option key={s} value={s} />)}
           </datalist>
         </div>
       </div>
+
 
       <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>
         พารามิเตอร์ ({rows.filter((r) => r.name.trim()).length})
@@ -419,9 +414,8 @@ function JobDetail({ job, onBack, onUpdateParam, onDeleteJob, onEditJob }) {
             ‹ กลับไปที่รายการรหัสงาน
           </button>
           <div style={{ fontSize: 20, fontWeight: 700, fontFamily: "monospace", color: C.text, letterSpacing: 0.5 }}>{job.jobNo}</div>
-          <div style={{ fontSize: 13, color: C.textMuted, marginTop: 2, display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ fontSize: 13, color: C.textMuted, marginTop: 2 }}>
             {job.sample || "-"}
-            {job.sampleType && <Badge color={C.cyan} bg={C.cyanDim}>{job.sampleType}</Badge>}
           </div>
         </div>
         <div style={{ textAlign: "right" }}>
@@ -488,7 +482,7 @@ function JobsList({ jobs, onOpen }) {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
             <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-              {["Job No", "Sample", "Type", "Params", "Complete", "Progress", "Status", ""].map((h) => (
+              {["Job No", "Sample", "Params", "Complete", "Progress", "Status", ""].map((h) => (
                 <th key={h} style={{ textAlign: "left", padding: "10px 12px", color: C.textMuted, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 600 }}>{h}</th>
               ))}
             </tr>
@@ -503,9 +497,6 @@ function JobsList({ jobs, onOpen }) {
                 >
                   <td style={{ padding: "10px 12px", fontFamily: "monospace", fontWeight: 700, color: C.cyan }}>{job.jobNo}</td>
                   <td style={{ padding: "10px 12px", color: C.text }}>{job.sample || "-"}</td>
-                  <td style={{ padding: "10px 12px" }}>
-                    {job.sampleType ? <Badge color={C.cyan} bg={C.cyanDim}>{job.sampleType}</Badge> : <span style={{ color: C.textFaint }}>-</span>}
-                  </td>
                   <td style={{ padding: "10px 12px", color: C.textMuted, fontFamily: "monospace" }}>{stats.total}</td>
                   <td style={{ padding: "10px 12px", color: C.textMuted, fontFamily: "monospace" }}>{stats.complete}</td>
                   <td style={{ padding: "10px 12px", width: 140 }}>
@@ -520,7 +511,7 @@ function JobsList({ jobs, onOpen }) {
               );
             })}
             {jobs.length === 0 && (
-              <tr><td colSpan={8} style={{ padding: 30, textAlign: "center", color: C.textFaint }}>ยังไม่มีรหัสงาน</td></tr>
+              <tr><td colSpan={7} style={{ padding: 30, textAlign: "center", color: C.textFaint }}>ยังไม่มีรหัสงาน</td></tr>
             )}
           </tbody>
         </table>
@@ -848,8 +839,8 @@ export default function App() {
   const analysts = useMemo(() => computeAnalysts(jobs), [jobs]);
   const knownAnalysts = useMemo(() => [...new Set(jobs.flatMap(j => j.parameters.map(p => p.analyst).filter(Boolean)))], [jobs]);
   const knownParams = useMemo(() => [...new Set(jobs.flatMap(j => j.parameters.map(p => p.name).filter(Boolean)))].sort((a, b) => a.localeCompare(b, "th")), [jobs]);
-  const knownSampleTypes = useMemo(
-    () => [...new Set([...SAMPLE_TYPES, ...jobs.map((j) => j.sampleType).filter(Boolean)])],
+  const knownSamples = useMemo(
+    () => [...new Set(jobs.map((j) => j.sample).filter(Boolean))].sort((a, b) => a.localeCompare(b, "th")),
     [jobs]
   );
 
@@ -964,7 +955,7 @@ export default function App() {
                     suggestedNo={genJobNo(jobs)}
                     knownAnalysts={knownAnalysts}
                     knownParams={knownParams}
-                    knownSampleTypes={knownSampleTypes}
+                    knownSamples={knownSamples}
                     existingJobNos={jobs.map((j) => j.jobNo)}
                   />
                 )}
@@ -975,7 +966,7 @@ export default function App() {
                     onSaveEdit={handleSaveEdit}
                     knownAnalysts={knownAnalysts}
                     knownParams={knownParams}
-                    knownSampleTypes={knownSampleTypes}
+                    knownSamples={knownSamples}
                   />
                 )}
                 {selectedJob && !editingJob ? (
