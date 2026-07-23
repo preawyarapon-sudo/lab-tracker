@@ -195,6 +195,28 @@ function computeAnalysts(jobs) {
   return Object.values(map).sort((x, y) => x.name.localeCompare(y.name, "th"));
 }
 
+// For each parameter name, finds the analyst most recently assigned to it
+// (by the parameter's updatedTs, falling back to the job's createdAt).
+// Used to auto-suggest an analyst when the same parameter is added to a
+// new job — always reflects the latest reassignment, since it's recomputed
+// live from current job data every time.
+function computeLastAnalystByParam(jobs) {
+  const latest = {};
+  for (const job of jobs) {
+    for (const p of job.parameters) {
+      if (!p.name || !p.analyst) continue;
+      const key = p.name.trim();
+      const ts = p.updatedTs || job.createdAt || 0;
+      if (!latest[key] || ts > latest[key].ts) {
+        latest[key] = { analyst: p.analyst, ts };
+      }
+    }
+  }
+  const out = {};
+  for (const key in latest) out[key] = latest[key].analyst;
+  return out;
+}
+
 function computeParamQueue(jobs) {
   const map = {};
   for (const job of jobs) {
@@ -359,21 +381,34 @@ async function deleteJobStorage(jobNo) {
 }
 
 // ---------- New / Edit Job Form ----------
-function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, knownAnalysts, knownParams, knownSamples, editingJob, existingJobNos = [] }) {
+function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, knownAnalysts, knownParams, knownSamples, editingJob, existingJobNos = [], lastAnalystByParam = {} }) {
   const isEdit = !!editingJob;
   const [jobNo, setJobNo] = useState(isEdit ? editingJob.jobNo : suggestedNo);
   const [sample, setSample] = useState(isEdit ? editingJob.sample || "" : "");
   const [rows, setRows] = useState(
     isEdit
-      ? editingJob.parameters.map((p) => ({ id: p.id, name: p.name, analyst: p.analyst || "" }))
+      ? editingJob.parameters.map((p) => ({ id: p.id, name: p.name, analyst: p.analyst || lastAnalystByParam[(p.name || "").trim()] || "" }))
       : [
           { id: uid(), name: "", analyst: "" },
           { id: uid(), name: "", analyst: "" },
         ]
   );
 
+  // Changing a row's parameter name auto-suggests the analyst who most
+  // recently ran that same parameter elsewhere in the system — only when
+  // the analyst field is still empty, so it never overwrites a manual pick.
   const updateRow = (id, field, val) => {
-    setRows((rs) => rs.map((r) => (r.id === id ? { ...r, [field]: val } : r)));
+    setRows((rs) =>
+      rs.map((r) => {
+        if (r.id !== id) return r;
+        const next = { ...r, [field]: val };
+        if (field === "name" && !r.analyst.trim()) {
+          const suggestion = lastAnalystByParam[val.trim()];
+          if (suggestion) next.analyst = suggestion;
+        }
+        return next;
+      })
+    );
   };
   const addRow = () => setRows((rs) => [...rs, { id: uid(), name: "", analyst: "" }]);
   const removeRow = (id) => setRows((rs) => (rs.length > 1 ? rs.filter((r) => r.id !== id) : rs));
@@ -405,7 +440,7 @@ function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, knownAnalysts
     if (!isEdit && parsed.jobNo) setJobNo(parsed.jobNo);
     if (parsed.sampleSummary) setSample(parsed.sampleSummary);
     if (parsed.parameters.length > 0) {
-      setRows(parsed.parameters.map((name) => ({ id: uid(), name, analyst: "" })));
+      setRows(parsed.parameters.map((name) => ({ id: uid(), name, analyst: lastAnalystByParam[name.trim()] || "" })));
     }
     if (parsed.samples.length > 0) {
       setSubsamples(parsed.samples.map((s) => ({ id: uid(), code: s.code, name: s.name })));
@@ -428,8 +463,18 @@ function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, knownAnalysts
         .map((r) => {
           const prev = existingById[r.id];
           if (prev) {
-            // keep status/timestamps of parameters that already existed; just update name/analyst
-            return { ...prev, name: r.name.trim(), analyst: r.analyst.trim() };
+            // keep status/timestamps of parameters that already existed; just
+            // update name/analyst — but if the analyst was reassigned, bump
+            // updatedTs so this counts as the newest assignment for that
+            // parameter (used to auto-suggest analysts on future jobs).
+            const newAnalyst = r.analyst.trim();
+            const reassigned = newAnalyst !== (prev.analyst || "");
+            return {
+              ...prev,
+              name: r.name.trim(),
+              analyst: newAnalyst,
+              ...(reassigned ? { updatedTs: nowTS(), updatedLabel: nowHM() } : {}),
+            };
           }
           // brand-new row added during edit
           return {
@@ -1082,6 +1127,7 @@ export default function App() {
     () => [...new Set(jobs.map((j) => j.sample).filter(Boolean))].sort((a, b) => a.localeCompare(b, "th")),
     [jobs]
   );
+  const lastAnalystByParam = useMemo(() => computeLastAnalystByParam(jobs), [jobs]);
 
   // Note: we don't need to manually update local state after these calls —
   // the onValue subscription above fires as soon as Firebase confirms the
@@ -1196,6 +1242,7 @@ export default function App() {
                     knownParams={knownParams}
                     knownSamples={knownSamples}
                     existingJobNos={jobs.map((j) => j.jobNo)}
+                    lastAnalystByParam={lastAnalystByParam}
                   />
                 )}
                 {editingJob && (
@@ -1206,6 +1253,7 @@ export default function App() {
                     knownAnalysts={knownAnalysts}
                     knownParams={knownParams}
                     knownSamples={knownSamples}
+                    lastAnalystByParam={lastAnalystByParam}
                   />
                 )}
                 {selectedJob && !editingJob ? (
