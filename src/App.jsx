@@ -850,6 +850,43 @@ function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, suggestedRegS
   );
 }
 
+// Action button(s) for one parameter row in the job detail table. "ยกเลิก"
+// (reset a completed parameter back to Waiting) needs a second, deliberate
+// tap before it fires — it sits in the exact same spot as "เริ่ม"/"เสร็จ" on
+// neighboring rows, so a single misclick while scanning down the list
+// should never silently undo a finished result. The confirm auto-cancels
+// after a few seconds if left untouched.
+function ParamActions({ jobNo, p, onUpdateParam }) {
+  const [confirming, setConfirming] = useState(false);
+
+  useEffect(() => {
+    if (!confirming) return;
+    const t = setTimeout(() => setConfirming(false), 4000);
+    return () => clearTimeout(t);
+  }, [confirming]);
+
+  if (p.status === STATUS.WAIT) {
+    return <Btn small kind="amber" onClick={() => onUpdateParam(jobNo, p.id, "start")}><Play size={12} /> เริ่ม</Btn>;
+  }
+  if (p.status === STATUS.RUN) {
+    return <Btn small kind="green" onClick={() => onUpdateParam(jobNo, p.id, "complete")}><CheckCircle2 size={12} /> เสร็จ</Btn>;
+  }
+  if (p.status === STATUS.DONE) {
+    if (confirming) {
+      return (
+        <>
+          <Btn small onClick={() => setConfirming(false)}>ไม่ใช่</Btn>
+          <Btn small kind="danger" onClick={() => { onUpdateParam(jobNo, p.id, "reset"); setConfirming(false); }}>ยืนยันยกเลิก</Btn>
+        </>
+      );
+    }
+    return (
+      <Btn small kind="danger" onClick={() => setConfirming(true)} title="ยกเลิกผลที่เสร็จแล้ว — ต้องกดยืนยันอีกครั้ง">ยกเลิก</Btn>
+    );
+  }
+  return null;
+}
+
 // ---------- Job Detail ----------
 function JobDetail({ job, onBack, onUpdateParam, onDeleteJob, onEditJob }) {
   const stats = computeJobStats(job);
@@ -927,15 +964,7 @@ function JobDetail({ job, onBack, onUpdateParam, onDeleteJob, onEditJob }) {
                 <td style={{ padding: "8px", color: C.textMuted, fontFamily: "monospace" }}>{p.finish || "-"}</td>
                 <td style={{ padding: "8px" }}>
                   <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                    {p.status === STATUS.WAIT && (
-                      <Btn small kind="amber" onClick={() => onUpdateParam(job.jobNo, p.id, "start")}><Play size={12} /> เริ่ม</Btn>
-                    )}
-                    {p.status === STATUS.RUN && (
-                      <Btn small kind="green" onClick={() => onUpdateParam(job.jobNo, p.id, "complete")}><CheckCircle2 size={12} /> เสร็จ</Btn>
-                    )}
-                    {p.status === STATUS.DONE && (
-                      <Btn small onClick={() => onUpdateParam(job.jobNo, p.id, "reset")}>ยกเลิก</Btn>
-                    )}
+                    <ParamActions jobNo={job.jobNo} p={p} onUpdateParam={onUpdateParam} />
                   </div>
                 </td>
               </tr>
