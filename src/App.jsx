@@ -315,26 +315,6 @@ function StatusGlyph({ status, size = 15 }) {
   return <Circle size={size} color={C.textFaint} strokeWidth={2} />;
 }
 
-function LedBar({ parameters }) {
-  return (
-    <div style={{ display: "flex", gap: 3 }}>
-      {parameters.map((p) => (
-        <div
-          key={p.id}
-          title={`${p.name}: ${p.status}`}
-          style={{
-            flex: 1,
-            height: 8,
-            borderRadius: 2,
-            background: statColor(p.status),
-            opacity: p.status === STATUS.WAIT ? 0.4 : 1,
-          }}
-        />
-      ))}
-    </div>
-  );
-}
-
 function Badge({ children, color, bg }) {
   return (
     <span
@@ -916,7 +896,7 @@ function JobDetail({ job, onBack, onUpdateParam, onDeleteJob, onEditJob }) {
       </div>
 
       <div style={{ margin: "14px 0 18px" }}>
-        <LedBar parameters={job.parameters} />
+        <ProgressBar job={job} />
       </div>
 
       {(job.regStart || job.regEnd) ? (
@@ -1034,7 +1014,7 @@ function JobsList({ jobs, onOpen }) {
                   <td style={{ padding: "10px 12px", color: C.textMuted, fontFamily: "monospace" }}>{stats.complete}</td>
                   <td style={{ padding: "10px 12px", width: 140 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <div style={{ flex: 1 }}><LedBar parameters={job.parameters} /></div>
+                      <div style={{ flex: 1 }}><ProgressBar job={job} /></div>
                       <span style={{ fontFamily: "monospace", fontSize: 12, color: C.textMuted, minWidth: 32, textAlign: "right" }}>{stats.progress}%</span>
                     </div>
                   </td>
