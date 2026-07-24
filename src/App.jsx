@@ -1055,7 +1055,7 @@ function AnalystsTable({ analysts, jobs, onOpenJob, onBulkUpdate }) {
                                 return (
                                   <div
                                     key={key}
-                                    onClick={(e) => { e.stopPropagation(); onOpenJob(p.jobNo); }}
+                                    onClick={() => toggleKey(key)}
                                     style={{
                                       display: "grid",
                                       gridTemplateColumns: "24px 110px 1fr 1fr 90px 70px 70px",
@@ -1075,7 +1075,15 @@ function AnalystsTable({ analysts, jobs, onOpenJob, onBulkUpdate }) {
                                       onChange={() => toggleKey(key)}
                                       style={{ cursor: "pointer" }}
                                     />
-                                    <span style={{ fontFamily: "monospace", fontWeight: 700, color: C.cyan, fontSize: 12 }}>{p.jobNo}</span>
+                                    <span
+                                      onClick={(e) => { e.stopPropagation(); onOpenJob(p.jobNo); }}
+                                      style={{ fontFamily: "monospace", fontWeight: 700, color: C.cyan, fontSize: 12, cursor: "pointer", textDecoration: "underline", textDecorationColor: "transparent" }}
+                                      onMouseEnter={(e) => (e.currentTarget.style.textDecorationColor = C.cyan)}
+                                      onMouseLeave={(e) => (e.currentTarget.style.textDecorationColor = "transparent")}
+                                      title="เปิดดูรายละเอียดงานนี้"
+                                    >
+                                      {p.jobNo}
+                                    </span>
                                     <span style={{ color: C.textMuted, fontSize: 12 }}>{p.sample || "-"}</span>
                                     <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: C.text, fontSize: 13, fontWeight: 600 }}>
                                       <StatusGlyph status={p.status} size={12} /> {p.name}
