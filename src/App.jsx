@@ -945,8 +945,31 @@ function analystParams(jobs, name) {
   return rows;
 }
 
-function AnalystsTable({ analysts, jobs, onOpenJob }) {
-  const [expanded, setExpanded] = useState(null);
+function AnalystsTable({ analysts, jobs, onOpenJob, onBulkUpdate }) {
+  const [expanded, setExpandedRaw] = useState(null);
+  const [selectedKeys, setSelectedKeys] = useState(new Set());
+
+  const setExpanded = (name) => {
+    setExpandedRaw(name);
+    setSelectedKeys(new Set());
+  };
+  const toggleKey = (key) => {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+  const runBulk = (action) => {
+    const items = [...selectedKeys].map((key) => {
+      const [jobNo, paramId] = key.split("__");
+      return { jobNo, paramId };
+    });
+    if (items.length === 0) return;
+    onBulkUpdate(items, action);
+    setSelectedKeys(new Set());
+  };
 
   return (
     <Panel style={{ overflow: "hidden" }}>
@@ -963,6 +986,8 @@ function AnalystsTable({ analysts, jobs, onOpenJob }) {
             {analysts.map((a) => {
               const isOpen = expanded === a.name;
               const params = isOpen ? analystParams(jobs, a.name) : [];
+              const allKeys = params.map((p) => `${p.jobNo}__${p.id}`);
+              const allSelected = allKeys.length > 0 && allKeys.every((k) => selectedKeys.has(k));
               return (
                 <React.Fragment key={a.name}>
                   <tr
@@ -993,39 +1018,74 @@ function AnalystsTable({ analysts, jobs, onOpenJob }) {
                     <tr>
                       <td colSpan={7} style={{ padding: 0, background: C.bg2 }}>
                         <div style={{ padding: "10px 16px 16px 42px" }}>
-                          <div style={{ fontSize: 11, color: C.textMuted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
-                            งานทั้งหมดของ {a.name} ({params.length})
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
+                            <div style={{ fontSize: 11, color: C.textMuted, textTransform: "uppercase", letterSpacing: 0.5, display: "flex", alignItems: "center", gap: 8 }}>
+                              {params.length > 0 && (
+                                <input
+                                  type="checkbox"
+                                  checked={allSelected}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onChange={() =>
+                                    setSelectedKeys(allSelected ? new Set() : new Set(allKeys))
+                                  }
+                                  style={{ cursor: "pointer" }}
+                                />
+                              )}
+                              งานทั้งหมดของ {a.name} ({params.length})
+                              {selectedKeys.size > 0 && (
+                                <span style={{ color: C.cyan, textTransform: "none", fontWeight: 600 }}>· เลือกแล้ว {selectedKeys.size} รายการ</span>
+                              )}
+                            </div>
+                            {selectedKeys.size > 0 && (
+                              <div style={{ display: "flex", gap: 6 }} onClick={(e) => e.stopPropagation()}>
+                                <Btn small kind="amber" onClick={() => runBulk("start")}><Play size={12} /> เริ่มพร้อมกัน</Btn>
+                                <Btn small kind="green" onClick={() => runBulk("complete")}><CheckCircle2 size={12} /> เสร็จพร้อมกัน</Btn>
+                                <Btn small onClick={() => runBulk("reset")}>ยกเลิก</Btn>
+                                <Btn small onClick={() => setSelectedKeys(new Set())}>ล้างการเลือก</Btn>
+                              </div>
+                            )}
                           </div>
                           {params.length === 0 ? (
                             <div style={{ color: C.textFaint, fontSize: 13 }}>ไม่มีงานที่รับผิดชอบ</div>
                           ) : (
                             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                              {params.map((p) => (
-                                <div
-                                  key={`${p.jobNo}-${p.id}`}
-                                  onClick={(e) => { e.stopPropagation(); onOpenJob(p.jobNo); }}
-                                  style={{
-                                    display: "grid",
-                                    gridTemplateColumns: "110px 1fr 1fr 90px 70px 70px",
-                                    gap: 10,
-                                    alignItems: "center",
-                                    padding: "8px 10px",
-                                    background: C.panel,
-                                    border: `1px solid ${C.borderSoft}`,
-                                    borderRadius: 6,
-                                    cursor: "pointer",
-                                  }}
-                                >
-                                  <span style={{ fontFamily: "monospace", fontWeight: 700, color: C.cyan, fontSize: 12 }}>{p.jobNo}</span>
-                                  <span style={{ color: C.textMuted, fontSize: 12 }}>{p.sample || "-"}</span>
-                                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: C.text, fontSize: 13, fontWeight: 600 }}>
-                                    <StatusGlyph status={p.status} size={12} /> {p.name}
-                                  </span>
-                                  <span><StatusBadge status={p.status} /></span>
-                                  <span style={{ fontFamily: "monospace", fontSize: 12, color: C.textMuted }}>{p.start || "-"}</span>
-                                  <span style={{ fontFamily: "monospace", fontSize: 12, color: C.textMuted }}>{p.finish || "-"}</span>
-                                </div>
-                              ))}
+                              {params.map((p) => {
+                                const key = `${p.jobNo}__${p.id}`;
+                                const checked = selectedKeys.has(key);
+                                return (
+                                  <div
+                                    key={key}
+                                    onClick={(e) => { e.stopPropagation(); onOpenJob(p.jobNo); }}
+                                    style={{
+                                      display: "grid",
+                                      gridTemplateColumns: "24px 110px 1fr 1fr 90px 70px 70px",
+                                      gap: 10,
+                                      alignItems: "center",
+                                      padding: "8px 10px",
+                                      background: checked ? C.cyanDim : C.panel,
+                                      border: `1px solid ${checked ? C.cyan : C.borderSoft}`,
+                                      borderRadius: 6,
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onClick={(e) => e.stopPropagation()}
+                                      onChange={() => toggleKey(key)}
+                                      style={{ cursor: "pointer" }}
+                                    />
+                                    <span style={{ fontFamily: "monospace", fontWeight: 700, color: C.cyan, fontSize: 12 }}>{p.jobNo}</span>
+                                    <span style={{ color: C.textMuted, fontSize: 12 }}>{p.sample || "-"}</span>
+                                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: C.text, fontSize: 13, fontWeight: 600 }}>
+                                      <StatusGlyph status={p.status} size={12} /> {p.name}
+                                    </span>
+                                    <span><StatusBadge status={p.status} /></span>
+                                    <span style={{ fontFamily: "monospace", fontSize: 12, color: C.textMuted }}>{p.start || "-"}</span>
+                                    <span style={{ fontFamily: "monospace", fontSize: 12, color: C.textMuted }}>{p.finish || "-"}</span>
+                                  </div>
+                                );
+                              })}
                             </div>
                           )}
                         </div>
@@ -1300,6 +1360,39 @@ export default function App() {
     }
   };
 
+  // Applies the same action (start/complete/reset) to many parameters at
+  // once, possibly spanning several jobs — used by the multi-select bulk
+  // actions in AnalystsTable. Groups by job first and writes each affected
+  // job exactly once, so selecting two parameters that belong to the same
+  // job doesn't have the second write clobber the first (which would
+  // happen if we just called handleUpdateParam in a loop, since each call
+  // would read the same stale `jobs` snapshot).
+  const handleBulkUpdateParams = async (items, action) => {
+    const byJob = {};
+    for (const it of items) {
+      if (!byJob[it.jobNo]) byJob[it.jobNo] = new Set();
+      byJob[it.jobNo].add(it.paramId);
+    }
+    try {
+      await Promise.all(
+        Object.entries(byJob).map(([jobNo, paramIds]) => {
+          const job = jobs.find((j) => j.jobNo === jobNo);
+          if (!job) return null;
+          const parameters = job.parameters.map((p) => {
+            if (!paramIds.has(p.id)) return p;
+            if (action === "start") return { ...p, status: STATUS.RUN, start: nowHM(), startTs: nowTS(), updatedTs: nowTS(), updatedLabel: nowHM() };
+            if (action === "complete") return { ...p, status: STATUS.DONE, finish: nowHM(), updatedTs: nowTS(), updatedLabel: nowHM() };
+            if (action === "reset") return { ...p, status: STATUS.WAIT, start: null, finish: null, startTs: null, updatedTs: nowTS(), updatedLabel: nowHM() };
+            return p;
+          });
+          return saveJob({ ...job, parameters });
+        })
+      );
+    } catch (e) {
+      setError("อัปเดตสถานะไม่สำเร็จ");
+    }
+  };
+
   const handleDeleteJob = async (jobNo) => {
     setSelected(null);
     setTab("jobs");
@@ -1397,7 +1490,7 @@ export default function App() {
                 )}
               </>
             )}
-            {tab === "analysts" && <AnalystsTable analysts={analysts} jobs={jobs} onOpenJob={openJob} />}
+            {tab === "analysts" && <AnalystsTable analysts={analysts} jobs={jobs} onOpenJob={openJob} onBulkUpdate={handleBulkUpdateParams} />}
             {tab === "parameters" && <ParametersTable jobs={jobs} onOpenJob={openJob} />}
           </>
         )}
