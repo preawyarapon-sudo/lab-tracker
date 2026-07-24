@@ -884,8 +884,33 @@ function JobDetail({ job, onBack, onUpdateParam, onDeleteJob, onEditJob }) {
 
 // ---------- Jobs List ----------
 function JobsList({ jobs, onOpen }) {
+  const [view, setView] = useState("active");
+  const activeJobs = jobs.filter((job) => computeJobStats(job).status !== STATUS.DONE);
+  const doneJobs = jobs.filter((job) => computeJobStats(job).status === STATUS.DONE);
+  const shown = view === "active" ? activeJobs : doneJobs;
+
+  const chip = (key, label, count) => (
+    <button
+      onClick={() => setView(key)}
+      style={{
+        display: "flex", alignItems: "center", gap: 6,
+        background: view === key ? C.panel2 : "transparent",
+        border: `1px solid ${view === key ? C.cyan : C.border}`,
+        color: view === key ? C.text : C.textMuted,
+        borderRadius: 999, padding: "6px 14px", fontSize: 12.5, fontWeight: 600,
+        cursor: "pointer", fontFamily: "inherit",
+      }}
+    >
+      {label} <span style={{ fontFamily: "monospace", opacity: 0.8 }}>({count})</span>
+    </button>
+  );
+
   return (
     <Panel style={{ overflow: "hidden" }}>
+      <div style={{ display: "flex", gap: 8, padding: "14px 16px", borderBottom: `1px solid ${C.borderSoft}` }}>
+        {chip("active", "กำลังดำเนินการ", activeJobs.length)}
+        {chip("complete", "เสร็จสมบูรณ์", doneJobs.length)}
+      </div>
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
@@ -896,7 +921,7 @@ function JobsList({ jobs, onOpen }) {
             </tr>
           </thead>
           <tbody>
-            {jobs.map((job) => {
+            {shown.map((job) => {
               const stats = computeJobStats(job);
               return (
                 <tr key={job.jobNo} onClick={() => onOpen(job.jobNo)} style={{ borderBottom: `1px solid ${C.borderSoft}`, cursor: "pointer" }}
@@ -920,8 +945,10 @@ function JobsList({ jobs, onOpen }) {
                 </tr>
               );
             })}
-            {jobs.length === 0 && (
-              <tr><td colSpan={9} style={{ padding: 30, textAlign: "center", color: C.textFaint }}>ยังไม่มีรหัสงาน</td></tr>
+            {shown.length === 0 && (
+              <tr><td colSpan={9} style={{ padding: 30, textAlign: "center", color: C.textFaint }}>
+                {view === "active" ? "ไม่มีงานที่กำลังดำเนินการ" : "ยังไม่มีงานที่เสร็จสมบูรณ์"}
+              </td></tr>
             )}
           </tbody>
         </table>
