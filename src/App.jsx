@@ -948,10 +948,12 @@ function analystParams(jobs, name) {
 function AnalystsTable({ analysts, jobs, onOpenJob, onBulkUpdate }) {
   const [expanded, setExpandedRaw] = useState(null);
   const [selectedKeys, setSelectedKeys] = useState(new Set());
+  const [showDone, setShowDone] = useState(false);
 
   const setExpanded = (name) => {
     setExpandedRaw(name);
     setSelectedKeys(new Set());
+    setShowDone(false);
   };
   const toggleKey = (key) => {
     setSelectedKeys((prev) => {
@@ -986,7 +988,9 @@ function AnalystsTable({ analysts, jobs, onOpenJob, onBulkUpdate }) {
             {analysts.map((a) => {
               const isOpen = expanded === a.name;
               const params = isOpen ? analystParams(jobs, a.name) : [];
-              const allKeys = params.map((p) => `${p.jobNo}__${p.id}`);
+              const activeParams = params.filter((p) => p.status !== STATUS.DONE);
+              const doneParams = params.filter((p) => p.status === STATUS.DONE);
+              const allKeys = activeParams.map((p) => `${p.jobNo}__${p.id}`);
               const allSelected = allKeys.length > 0 && allKeys.every((k) => selectedKeys.has(k));
               return (
                 <React.Fragment key={a.name}>
@@ -1020,7 +1024,7 @@ function AnalystsTable({ analysts, jobs, onOpenJob, onBulkUpdate }) {
                         <div style={{ padding: "10px 16px 16px 42px" }}>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
                             <div style={{ fontSize: 11, color: C.textMuted, textTransform: "uppercase", letterSpacing: 0.5, display: "flex", alignItems: "center", gap: 8 }}>
-                              {params.length > 0 && (
+                              {activeParams.length > 0 && (
                                 <input
                                   type="checkbox"
                                   checked={allSelected}
@@ -1031,7 +1035,7 @@ function AnalystsTable({ analysts, jobs, onOpenJob, onBulkUpdate }) {
                                   style={{ cursor: "pointer" }}
                                 />
                               )}
-                              งานทั้งหมดของ {a.name} ({params.length})
+                              งานที่ยังไม่เสร็จของ {a.name} ({activeParams.length})
                               {selectedKeys.size > 0 && (
                                 <span style={{ color: C.cyan, textTransform: "none", fontWeight: 600 }}>· เลือกแล้ว {selectedKeys.size} รายการ</span>
                               )}
@@ -1045,11 +1049,13 @@ function AnalystsTable({ analysts, jobs, onOpenJob, onBulkUpdate }) {
                               </div>
                             )}
                           </div>
-                          {params.length === 0 ? (
-                            <div style={{ color: C.textFaint, fontSize: 13 }}>ไม่มีงานที่รับผิดชอบ</div>
+                          {activeParams.length === 0 ? (
+                            <div style={{ color: C.textFaint, fontSize: 13 }}>
+                              {doneParams.length > 0 ? "ทำครบทุกงานแล้ว 🎉" : "ไม่มีงานที่รับผิดชอบ"}
+                            </div>
                           ) : (
                             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                              {params.map((p) => {
+                              {activeParams.map((p) => {
                                 const key = `${p.jobNo}__${p.id}`;
                                 const checked = selectedKeys.has(key);
                                 return (
@@ -1094,6 +1100,60 @@ function AnalystsTable({ analysts, jobs, onOpenJob, onBulkUpdate }) {
                                   </div>
                                 );
                               })}
+                            </div>
+                          )}
+
+                          {doneParams.length > 0 && (
+                            <div style={{ marginTop: 14 }}>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setShowDone((v) => !v); }}
+                                style={{
+                                  display: "flex", alignItems: "center", gap: 6, background: "none", border: "none",
+                                  cursor: "pointer", padding: 0, marginBottom: showDone ? 8 : 0,
+                                  fontSize: 11, color: C.green, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700, fontFamily: "inherit",
+                                }}
+                              >
+                                {showDone ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                                <CheckCircle2 size={13} /> เสร็จแล้ว ({doneParams.length})
+                              </button>
+                              {showDone && (
+                                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                                  {doneParams.map((p) => (
+                                    <div
+                                      key={`${p.jobNo}__${p.id}`}
+                                      style={{
+                                        display: "grid",
+                                        gridTemplateColumns: "24px 110px 1fr 1fr 90px 70px 70px",
+                                        gap: 10,
+                                        alignItems: "center",
+                                        padding: "8px 10px",
+                                        background: C.greenDim,
+                                        border: `1px solid ${C.greenDim}`,
+                                        borderRadius: 6,
+                                        opacity: 0.85,
+                                      }}
+                                    >
+                                      <span />
+                                      <span
+                                        onClick={() => onOpenJob(p.jobNo)}
+                                        style={{ fontFamily: "monospace", fontWeight: 700, color: C.cyan, fontSize: 12, cursor: "pointer", textDecoration: "underline", textDecorationColor: "transparent" }}
+                                        onMouseEnter={(e) => (e.currentTarget.style.textDecorationColor = C.cyan)}
+                                        onMouseLeave={(e) => (e.currentTarget.style.textDecorationColor = "transparent")}
+                                        title="เปิดดูรายละเอียดงานนี้"
+                                      >
+                                        {p.jobNo}
+                                      </span>
+                                      <span style={{ color: C.textMuted, fontSize: 12 }}>{p.sample || "-"}</span>
+                                      <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: C.text, fontSize: 13, fontWeight: 600 }}>
+                                        <StatusGlyph status={p.status} size={12} /> {p.name}
+                                      </span>
+                                      <span><StatusBadge status={p.status} /></span>
+                                      <span style={{ fontFamily: "monospace", fontSize: 12, color: C.textMuted }}>{p.start || "-"}</span>
+                                      <span style={{ fontFamily: "monospace", fontSize: 12, color: C.textMuted }}>{p.finish || "-"}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
