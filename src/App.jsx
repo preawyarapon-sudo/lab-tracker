@@ -1112,7 +1112,7 @@ function AnalystRow({ a, onOpenJob, onBulkUpdate }) {
     <div style={{ borderBottom: `1px solid ${C.borderSoft}` }}>
       <div
         onClick={toggleOpen}
-        style={{ display: "grid", gridTemplateColumns: "20px 1.2fr 1fr 1.4fr 90px", gap: 10, alignItems: "center", padding: "12px 10px", cursor: "pointer" }}
+        style={{ display: "grid", gridTemplateColumns: "20px 1.2fr 1fr 1.4fr 150px", gap: 10, alignItems: "center", padding: "12px 10px", cursor: "pointer" }}
       >
         {open ? <ChevronDown size={15} color={C.textFaint} /> : <ChevronRight size={15} color={C.textFaint} />}
         <span style={{ fontWeight: 700, color: C.text, fontSize: 13.5 }}>{a.name}</span>
@@ -1120,8 +1120,9 @@ function AnalystRow({ a, onOpenJob, onBulkUpdate }) {
         <span style={{ fontSize: 13, color: C.text, display: "flex", alignItems: "center", gap: 6 }}>
           {current ? <><CircleDot size={12} color={C.amber} /> {current.name}</> : "-"}
         </span>
-        <div style={{ display: "flex", gap: 6 }}>
-          {a.running.length > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: C.amber, background: C.amberDim, padding: "2px 8px", borderRadius: 4 }}>{a.running.length} กำลังทำ</span>}
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {a.running.length > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: C.amber, background: C.amberDim, padding: "2px 8px", borderRadius: 4, whiteSpace: "nowrap" }}>{a.running.length} กำลังทำ</span>}
+          {a.waiting.length > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, background: C.panel2, padding: "2px 8px", borderRadius: 4, whiteSpace: "nowrap" }}>{a.waiting.length} รอคิว</span>}
         </div>
       </div>
       {open && (
@@ -1233,7 +1234,7 @@ function AnalystsTable({ jobs, onOpenJob, onBulkUpdate }) {
   const analysts = useMemo(() => computeAnalysts(jobs), [jobs]);
   return (
     <Panel style={{ overflow: "hidden" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "20px 1.2fr 1fr 1.4fr 90px", gap: 10, padding: "10px 10px", borderBottom: `1px solid ${C.border}` }}>
+      <div style={{ display: "grid", gridTemplateColumns: "20px 1.2fr 1fr 1.4fr 150px", gap: 10, padding: "10px 10px", borderBottom: `1px solid ${C.border}` }}>
         {["", "ผู้วิเคราะห์", "งานปัจจุบัน", "พารามิเตอร์ที่ทำอยู่", "คิว"].map((h) => (
           <span key={h} style={{ fontSize: 11, color: C.textMuted, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 600 }}>{h}</span>
         ))}
