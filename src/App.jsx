@@ -509,19 +509,40 @@ function subscribeJobs(callback, onError) {
 async function saveJob(job) {
   await set(ref(db, `jobs/${job.jobNo}`), job);
 }
-async function notifyLineJobDone(job) {
+async function notifyLine(message) {
   try {
     await fetch("/api/notify-line", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message: `✅ งาน ${job.jobNo} (${job.sample || "-"}) เสร็จสมบูรณ์แล้ว`,
-      }),
+      body: JSON.stringify({ message }),
     });
   } catch (e) {
     // ไม่ต้อง block การทำงานหลักถ้าแจ้งเตือนพลาด
     console.error("notify-line failed", e);
   }
+}
+function notifyLineJobDone(job) {
+  return notifyLine(
+    [
+      "🎉✅ งานเสร็จสมบูรณ์แล้ว!",
+      `🔖 รหัสงาน: ${job.jobNo}`,
+      `🧪 ประเภทตัวอย่าง: ${job.sample || "-"}`,
+    ].join("\n")
+  );
+}
+function notifyLineNewJob(job) {
+  const paramNames = (job.parameters || []).map((p) => p.name).filter(Boolean).join(", ");
+  const regRange = job.regStart || job.regEnd ? `${job.regStart || "-"}–${job.regEnd || "-"}` : "-";
+  return notifyLine(
+    [
+      "🆕📋 มีงานใหม่เข้าระบบ",
+      `🔖 รหัสงาน: ${job.jobNo}`,
+      `🔢 ช่วงเลขตัวอย่าง: ${regRange}`,
+      `📦 จำนวนตัวอย่าง: ${job.sampleCount ? `${job.sampleCount} ตัวอย่าง` : "-"}`,
+      `🧪 ประเภทตัวอย่าง: ${job.sample || "-"}`,
+      `📝 พารามิเตอร์: ${paramNames || "-"}`,
+    ].join("\n")
+  );
 }
 async function deleteJobStorage(jobNo) {
   await remove(ref(db, `jobs/${jobNo}`));
@@ -1556,6 +1577,7 @@ export default function App() {
     setShowForm(false);
     try {
       await saveJob(job);
+      notifyLineNewJob(job);
     } catch (e) {
       setError("บันทึกรหัสงานไม่สำเร็จ");
     }
