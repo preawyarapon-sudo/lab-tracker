@@ -1153,17 +1153,38 @@ function AnalystRow({ a, onOpenJob, onBulkUpdate }) {
       return next;
     });
   };
-  const activeParams = [...a.running, ...a.waiting];
-  const allKeys = activeParams.map((p) => `${p.jobNo}__${p.id}`);
-  const allSelected = allKeys.length > 0 && allKeys.every((k) => selectedKeys.has(k));
-  const runBulk = (action) => {
-    const items = [...selectedKeys].map((key) => {
+  const runningKeys = a.running.map((p) => `${p.jobNo}__${p.id}`);
+  const waitingKeys = a.waiting.map((p) => `${p.jobNo}__${p.id}`);
+  const selectedRunningKeys = runningKeys.filter((k) => selectedKeys.has(k));
+  const selectedWaitingKeys = waitingKeys.filter((k) => selectedKeys.has(k));
+  const runningAllSelected = runningKeys.length > 0 && runningKeys.every((k) => selectedKeys.has(k));
+  const waitingAllSelected = waitingKeys.length > 0 && waitingKeys.every((k) => selectedKeys.has(k));
+
+  const toggleGroupAll = (groupKeys, allSelected) => {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (allSelected) groupKeys.forEach((k) => next.delete(k));
+      else groupKeys.forEach((k) => next.add(k));
+      return next;
+    });
+  };
+
+  // Only acts on the subset of the current selection that's actually
+  // eligible for this action (start -> waiting items only, complete/reset
+  // -> running items only), so a stray selection from the "wrong" group
+  // never gets silently mis-applied.
+  const runBulk = (action, keys) => {
+    const items = keys.map((key) => {
       const [jobNo, paramId] = key.split("__");
       return { jobNo, paramId };
     });
     if (items.length === 0) return;
     onBulkUpdate(items, action);
-    setSelectedKeys(new Set());
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      keys.forEach((k) => next.delete(k));
+      return next;
+    });
   };
 
   return (
@@ -1185,33 +1206,36 @@ function AnalystRow({ a, onOpenJob, onBulkUpdate }) {
       </div>
       {open && (
         <div style={{ padding: "4px 12px 16px 42px", background: C.bg2 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
-            <div style={{ fontSize: 11, color: C.textMuted, textTransform: "uppercase", letterSpacing: 0.5, display: "flex", alignItems: "center", gap: 8 }}>
-              {allKeys.length > 0 && (
-                <input
-                  type="checkbox"
-                  checked={allSelected}
-                  onClick={(e) => e.stopPropagation()}
-                  onChange={() => setSelectedKeys(allSelected ? new Set() : new Set(allKeys))}
-                  style={{ cursor: "pointer" }}
-                />
-              )}
-              เลือกทั้งหมดของ {a.name} ({allKeys.length})
-              {selectedKeys.size > 0 && <span style={{ color: C.cyan, textTransform: "none", fontWeight: 600 }}>· เลือกแล้ว {selectedKeys.size} รายการ</span>}
-            </div>
-            {selectedKeys.size > 0 && (
+          {selectedKeys.size > 0 && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
+              <div style={{ fontSize: 12, color: C.cyan, fontWeight: 600 }}>เลือกแล้ว {selectedKeys.size} รายการ</div>
               <div style={{ display: "flex", gap: 6 }} onClick={(e) => e.stopPropagation()}>
-                <Btn small kind="amber" onClick={() => runBulk("start")}><Play size={12} /> เริ่มพร้อมกัน</Btn>
-                <Btn small kind="green" onClick={() => runBulk("complete")}><CheckCircle2 size={12} /> เสร็จพร้อมกัน</Btn>
-                <Btn small onClick={() => runBulk("reset")}>ยกเลิก</Btn>
+                {selectedWaitingKeys.length > 0 && (
+                  <Btn small kind="amber" onClick={() => runBulk("start", selectedWaitingKeys)}><Play size={12} /> เริ่มพร้อมกัน ({selectedWaitingKeys.length})</Btn>
+                )}
+                {selectedRunningKeys.length > 0 && (
+                  <>
+                    <Btn small kind="green" onClick={() => runBulk("complete", selectedRunningKeys)}><CheckCircle2 size={12} /> เสร็จพร้อมกัน ({selectedRunningKeys.length})</Btn>
+                    <Btn small onClick={() => runBulk("reset", selectedRunningKeys)}>ยกเลิก ({selectedRunningKeys.length})</Btn>
+                  </>
+                )}
                 <Btn small onClick={() => setSelectedKeys(new Set())}>ล้างการเลือก</Btn>
               </div>
-            )}
-          </div>
+            </div>
+          )}
 
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: C.amber, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.amber, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6, display: "flex", alignItems: "center", gap: 8 }}>
+                {runningKeys.length > 0 && (
+                  <input
+                    type="checkbox"
+                    checked={runningAllSelected}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={() => toggleGroupAll(runningKeys, runningAllSelected)}
+                    style={{ cursor: "pointer" }}
+                  />
+                )}
                 <CircleDot size={12} /> เข้าคิววิเคราะห์แล้ว ({a.running.length})
               </div>
               {a.running.length === 0 ? (
@@ -1226,7 +1250,16 @@ function AnalystRow({ a, onOpenJob, onBulkUpdate }) {
               )}
             </div>
             <div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6, display: "flex", alignItems: "center", gap: 8 }}>
+                {waitingKeys.length > 0 && (
+                  <input
+                    type="checkbox"
+                    checked={waitingAllSelected}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={() => toggleGroupAll(waitingKeys, waitingAllSelected)}
+                    style={{ cursor: "pointer" }}
+                  />
+                )}
                 <Circle size={12} /> ยังไม่เข้าคิว ({a.waiting.length})
               </div>
               {a.waiting.length === 0 ? (
