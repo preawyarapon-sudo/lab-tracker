@@ -533,11 +533,12 @@ function notifyLineNewJob(job) {
   const paramNames = (job.parameters || []).map((p) => p.name).filter(Boolean).join(", ");
   const regRange = job.regStart || job.regEnd ? `${job.regStart || "-"}–${job.regEnd || "-"}` : "-";
   return notifyLine(
-    [
-      `🆕📥 งานใหม่: ${job.jobNo}`,
-      `ประเภทตัวอย่าง: ${job.sample || "-"}`,
-      `ช่วงเลขตัวอย่าง: ${regRange}${job.sampleCount ? ` (${job.sampleCount} ตัวอย่าง)` : ""}`,
-      `พารามิเตอร์: ${paramNames || "-"}`,
+     [
+      `🆕📥 งานใหม่ : ${job.jobNo}`,
+      `ประเภท    : ${job.sample || "-"}`,
+      `เลขทะเบียน : ${regRange}`,
+      `จำนวน     : ${job.sampleCount ? `${job.sampleCount} ตัวอย่าง` : "-"}`,
+      `พารามิเตอร์ : ${paramNames || "-"}`,
     ].join("\n")
   );
 }
