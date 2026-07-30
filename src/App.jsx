@@ -509,6 +509,20 @@ function subscribeJobs(callback, onError) {
 async function saveJob(job) {
   await set(ref(db, `jobs/${job.jobNo}`), job);
 }
+async function notifyLineJobDone(job) {
+  try {
+    await fetch("/api/notify-line", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: `✅ งาน ${job.jobNo} (${job.sample || "-"}) เสร็จสมบูรณ์แล้ว`,
+      }),
+    });
+  } catch (e) {
+    // ไม่ต้อง block การทำงานหลักถ้าแจ้งเตือนพลาด
+    console.error("notify-line failed", e);
+  }
+}
 async function deleteJobStorage(jobNo) {
   await remove(ref(db, `jobs/${jobNo}`));
 }
@@ -1559,6 +1573,7 @@ export default function App() {
   const handleUpdateParam = async (jobNo, paramId, action) => {
     const job = jobs.find((j) => j.jobNo === jobNo);
     if (!job) return;
+    const wasDone = computeJobStats(job).status === STATUS.DONE;
     const parameters = job.parameters.map((p) => {
       if (p.id !== paramId) return p;
       if (action === "start") return { ...p, status: STATUS.RUN, start: nowHM(), startTs: nowTS(), updatedTs: nowTS(), updatedLabel: nowHM() };
@@ -1566,8 +1581,13 @@ export default function App() {
       if (action === "reset") return { ...p, status: STATUS.WAIT, start: null, finish: null, startTs: null, finishTs: null, updatedTs: nowTS(), updatedLabel: nowHM() };
       return p;
     });
+    const updatedJob = { ...job, parameters };
     try {
-      await saveJob({ ...job, parameters });
+      await saveJob(updatedJob);
+      const isNowDone = computeJobStats(updatedJob).status === STATUS.DONE;
+      if (!wasDone && isNowDone) {
+        notifyLineJobDone(updatedJob);
+      }
     } catch (e) {
       setError("อัปเดตสถานะไม่สำเร็จ");
     }
@@ -1588,9 +1608,10 @@ export default function App() {
     }
     try {
       await Promise.all(
-        Object.entries(byJob).map(([jobNo, paramIds]) => {
+        Object.entries(byJob).map(async ([jobNo, paramIds]) => {
           const job = jobs.find((j) => j.jobNo === jobNo);
           if (!job) return null;
+          const wasDone = computeJobStats(job).status === STATUS.DONE;
           const parameters = job.parameters.map((p) => {
             if (!paramIds.has(p.id)) return p;
             if (action === "start") return { ...p, status: STATUS.RUN, start: nowHM(), startTs: nowTS(), updatedTs: nowTS(), updatedLabel: nowHM() };
@@ -1598,7 +1619,12 @@ export default function App() {
             if (action === "reset") return { ...p, status: STATUS.WAIT, start: null, finish: null, startTs: null, finishTs: null, updatedTs: nowTS(), updatedLabel: nowHM() };
             return p;
           });
-          return saveJob({ ...job, parameters });
+          const updatedJob = { ...job, parameters };
+          await saveJob(updatedJob);
+          const isNowDone = computeJobStats(updatedJob).status === STATUS.DONE;
+          if (!wasDone && isNowDone) {
+            notifyLineJobDone(updatedJob);
+          }
         })
       );
     } catch (e) {
