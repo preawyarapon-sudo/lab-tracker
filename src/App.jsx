@@ -524,9 +524,8 @@ async function notifyLine(message) {
 function notifyLineJobDone(job) {
   return notifyLine(
     [
-      "🎉✅ งานเสร็จสมบูรณ์แล้ว!",
-      `🔖 รหัสงาน: ${job.jobNo}`,
-      `🧪 ประเภทตัวอย่าง: ${job.sample || "-"}`,
+      `✅ งานเสร็จสมบูรณ์: ${job.jobNo}`,
+      `ประเภทตัวอย่าง: ${job.sample || "-"}`,
     ].join("\n")
   );
 }
@@ -535,12 +534,10 @@ function notifyLineNewJob(job) {
   const regRange = job.regStart || job.regEnd ? `${job.regStart || "-"}–${job.regEnd || "-"}` : "-";
   return notifyLine(
     [
-      "🆕📋 มีงานใหม่เข้าระบบ",
-      `🔖 รหัสงาน: ${job.jobNo}`,
-      `🔢 ช่วงเลขตัวอย่าง: ${regRange}`,
-      `📦 จำนวนตัวอย่าง: ${job.sampleCount ? `${job.sampleCount} ตัวอย่าง` : "-"}`,
-      `🧪 ประเภทตัวอย่าง: ${job.sample || "-"}`,
-      `📝 พารามิเตอร์: ${paramNames || "-"}`,
+      `🆕📥 งานใหม่: ${job.jobNo}`,
+      `ประเภทตัวอย่าง: ${job.sample || "-"}`,
+      `ช่วงเลขตัวอย่าง: ${regRange}${job.sampleCount ? ` (${job.sampleCount} ตัวอย่าง)` : ""}`,
+      `พารามิเตอร์: ${paramNames || "-"}`,
     ].join("\n")
   );
 }
