@@ -49,6 +49,22 @@ function fmtDate(ts) {
   if (!ts) return "-";
   return new Date(ts).toLocaleDateString("th-TH", { day: "2-digit", month: "short", year: "numeric" });
 }
+// Compact date + time, e.g. "23 ก.ค. 09:42" — used for start/finish columns
+// so it's clear which day a measurement was started or completed on, not
+// just the time of day.
+function fmtDateTime(ts) {
+  if (!ts) return "-";
+  const d = new Date(ts);
+  const date = d.toLocaleDateString("th-TH", { day: "2-digit", month: "short" });
+  const time = d.toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return `${date} ${time}`;
+}
+// Prefers the full date+time from a stored timestamp; falls back to the
+// old time-only label for rows saved before finishTs/startTs existed.
+function tsLabel(ts, fallbackLabel) {
+  if (ts) return fmtDateTime(ts);
+  return fallbackLabel || "-";
+}
 // Deadline urgency for a job, based on days since creation.
 // Only meaningful while the job isn't fully complete.
 function deadlineInfo(job) {
@@ -940,8 +956,8 @@ function JobDetail({ job, onBack, onUpdateParam, onDeleteJob, onEditJob }) {
                 <td style={{ padding: "8px", fontWeight: 600, color: C.text }}>{p.name}</td>
                 <td style={{ padding: "8px", color: C.textMuted }}>{p.analyst || "-"}</td>
                 <td style={{ padding: "8px" }}><StatusBadge status={p.status} /></td>
-                <td style={{ padding: "8px", color: C.textMuted, fontFamily: "monospace" }}>{p.start || "-"}</td>
-                <td style={{ padding: "8px", color: C.textMuted, fontFamily: "monospace" }}>{p.finish || "-"}</td>
+                <td style={{ padding: "8px", color: C.textMuted, fontFamily: "monospace" }}>{tsLabel(p.startTs, p.start)}</td>
+                <td style={{ padding: "8px", color: C.textMuted, fontFamily: "monospace" }}>{tsLabel(p.finishTs, p.finish)}</td>
                 <td style={{ padding: "8px" }}>
                   <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
                     <ParamActions jobNo={job.jobNo} p={p} onUpdateParam={onUpdateParam} />
@@ -1413,8 +1429,8 @@ function ParametersTable({ jobs, onOpenJob }) {
                                 <span style={{ color: C.textMuted, fontSize: 12 }}>{p.sample || "-"}</span>
                                 <span style={{ color: C.text, fontSize: 13 }}>{p.analyst || "-"}</span>
                                 <span><StatusBadge status={p.status} /></span>
-                                <span style={{ fontFamily: "monospace", fontSize: 12, color: C.textMuted }}>{p.start || "-"}</span>
-                                <span style={{ fontFamily: "monospace", fontSize: 12, color: C.textMuted }}>{p.finish || "-"}</span>
+                                <span style={{ fontFamily: "monospace", fontSize: 12, color: C.textMuted }}>{tsLabel(p.startTs, p.start)}</span>
+                                <span style={{ fontFamily: "monospace", fontSize: 12, color: C.textMuted }}>{tsLabel(p.finishTs, p.finish)}</span>
                               </div>
                             ))}
                           </div>
@@ -1546,8 +1562,8 @@ export default function App() {
     const parameters = job.parameters.map((p) => {
       if (p.id !== paramId) return p;
       if (action === "start") return { ...p, status: STATUS.RUN, start: nowHM(), startTs: nowTS(), updatedTs: nowTS(), updatedLabel: nowHM() };
-      if (action === "complete") return { ...p, status: STATUS.DONE, finish: nowHM(), updatedTs: nowTS(), updatedLabel: nowHM() };
-      if (action === "reset") return { ...p, status: STATUS.WAIT, start: null, finish: null, startTs: null, updatedTs: nowTS(), updatedLabel: nowHM() };
+      if (action === "complete") return { ...p, status: STATUS.DONE, finish: nowHM(), finishTs: nowTS(), updatedTs: nowTS(), updatedLabel: nowHM() };
+      if (action === "reset") return { ...p, status: STATUS.WAIT, start: null, finish: null, startTs: null, finishTs: null, updatedTs: nowTS(), updatedLabel: nowHM() };
       return p;
     });
     try {
@@ -1578,8 +1594,8 @@ export default function App() {
           const parameters = job.parameters.map((p) => {
             if (!paramIds.has(p.id)) return p;
             if (action === "start") return { ...p, status: STATUS.RUN, start: nowHM(), startTs: nowTS(), updatedTs: nowTS(), updatedLabel: nowHM() };
-            if (action === "complete") return { ...p, status: STATUS.DONE, finish: nowHM(), updatedTs: nowTS(), updatedLabel: nowHM() };
-            if (action === "reset") return { ...p, status: STATUS.WAIT, start: null, finish: null, startTs: null, updatedTs: nowTS(), updatedLabel: nowHM() };
+            if (action === "complete") return { ...p, status: STATUS.DONE, finish: nowHM(), finishTs: nowTS(), updatedTs: nowTS(), updatedLabel: nowHM() };
+            if (action === "reset") return { ...p, status: STATUS.WAIT, start: null, finish: null, startTs: null, finishTs: null, updatedTs: nowTS(), updatedLabel: nowHM() };
             return p;
           });
           return saveJob({ ...job, parameters });
