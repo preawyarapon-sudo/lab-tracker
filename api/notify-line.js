@@ -21,8 +21,8 @@ export default async function handler(req, res) {
     return;
   }
 
-  const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;q+gEVwxOmbBn5UDexJa4efw1aDxzvmTpvXRLJDEhp7OB4SEc/HHUTWJ37HDxDZZKER2mtbPRrPobwZ8v3Q4mp+dpyLh3KUvarG4UU7AIibuGULJdtDrvMlYepZ7aOs8Aqm08Ds9X6pYJ+DmKNWjJ0AdB04t89/1O/w1cDnyilFU=
-  const groupId = process.env.LINE_GROUP_ID;C5ab9aa910c9b4b813877f44c0d80df3a
+  const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+  const groupId = process.env.LINE_GROUP_ID;
   if (!token || !groupId) {
     console.warn("LINE_CHANNEL_ACCESS_TOKEN / LINE_GROUP_ID not set — skipping LINE push");
     res.status(200).json({ ok: false, skipped: true });
