@@ -529,16 +529,29 @@ function notifyLineJobDone(job) {
     ].join("\n")
   );
 }
+function notifyLineJobLate(job) {
+  const pendingParams = (job.parameters || [])
+    .filter((p) => p.status !== STATUS.DONE)
+    .map((p) => p.name)
+    .filter(Boolean);
+  return notifyLine(
+    [
+      `⏰ งานล่าช้า: ${job.jobNo}`,
+      `ประเภทตัวอย่าง: ${job.sample || "-"}`,
+      `พารามิเตอร์ที่ยังไม่เสร็จ: ${pendingParams.join(", ") || "-"}`,
+    ].join("\n")
+  );
+}
 function notifyLineNewJob(job) {
   const paramNames = (job.parameters || []).map((p) => p.name).filter(Boolean).join(", ");
   const regRange = job.regStart || job.regEnd ? `${job.regStart || "-"}–${job.regEnd || "-"}` : "-";
   return notifyLine(
-     [
-      `🆕📥 งานใหม่ : ${job.jobNo}`,
-      `ประเภท    : ${job.sample || "-"}`,
-      `เลขทะเบียน : ${regRange}`,
-      `จำนวน     : ${job.sampleCount ? `${job.sampleCount} ตัวอย่าง` : "-"}`,
-      `พารามิเตอร์ : ${paramNames || "-"}`,
+    [
+      `🆕📥 งานใหม่: ${job.jobNo}`,
+      `ประเภทตัวอย่าง: ${job.sample || "-"}`,
+      `ช่วงเลขตัวอย่าง: ${regRange}`,
+      `จำนวนตัวอย่าง: ${job.sampleCount ? `${job.sampleCount} ตัวอย่าง` : "-"}`,
+      `พารามิเตอร์: ${paramNames || "-"}`,
     ].join("\n")
   );
 }
@@ -1551,6 +1564,21 @@ export default function App() {
     );
     return () => unsubscribe();
   }, []);
+
+  // แจ้งเตือนงานล่าช้า: เมื่อรหัสงานใดครบกำหนด LATE_DAYS และยังไม่เสร็จ
+  // จะยิงแจ้งเตือนครั้งเดียว (กันยิงซ้ำด้วย flag lateNotifiedAt ที่บันทึกลง
+  // Firebase) โดยระบุพารามิเตอร์ที่ยังไม่เสร็จในข้อความด้วย
+  useEffect(() => {
+    jobs.forEach((job) => {
+      if (job.lateNotifiedAt) return;
+      if (computeJobStats(job).status === STATUS.DONE) return;
+      if (deadlineInfo(job).level !== "late") return;
+      const updatedJob = { ...job, lateNotifiedAt: nowTS() };
+      saveJob(updatedJob)
+        .then(() => notifyLineJobLate(updatedJob))
+        .catch((e) => console.error("save lateNotifiedAt failed", e));
+    });
+  }, [jobs]);
 
   // Data is live via onValue, so "refresh" just re-affirms the connection —
   // kept mainly so the button still gives visible feedback.
