@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
-import { FlaskConical, Plus, X, RefreshCw, LayoutGrid, ListChecks, Users, Layers, Trash2, Play, CheckCircle2, CircleDot, Circle, ChevronRight, ChevronDown, AlertCircle, AlertTriangle, Clock, ClipboardPaste, Sparkles } from "lucide-react";
+import { FlaskConical, Plus, X, RefreshCw, LayoutGrid, ListChecks, Users, Layers, Trash2, Play, CheckCircle2, CircleDot, Circle, ChevronRight, ChevronDown, AlertCircle, AlertTriangle, Clock, ClipboardPaste, Sparkles, Search } from "lucide-react";
 import { db } from "./firebase";
 import { ref, onValue, set, remove } from "firebase/database";
 
@@ -962,11 +962,36 @@ function JobDetail({ job, onBack, onUpdateParam, onDeleteJob, onEditJob }) {
 }
 
 // ---------- Jobs List ----------
+// Checks a job against a free-text search query: matches on job number or
+// sample name (substring, case-insensitive), OR — if the query is purely
+// numeric — matches when it falls inside (or equals an endpoint of) the
+// job's registration-number range, so searching e.g. "05423" finds the
+// job whose range covers that sample even if it's not the start/end number.
+function jobMatchesSearch(job, query) {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  if ((job.jobNo || "").toLowerCase().includes(q)) return true;
+  if ((job.sample || "").toLowerCase().includes(q)) return true;
+  if (/^\d+$/.test(q)) {
+    const start = parseRegNo(job.regStart);
+    const end = parseRegNo(job.regEnd);
+    const target = parseInt(q, 10);
+    if (start && end && target >= start.num && target <= end.num) return true;
+    if (start && !end && target === start.num) return true;
+  } else {
+    if ((job.regStart || "").toLowerCase().includes(q)) return true;
+    if ((job.regEnd || "").toLowerCase().includes(q)) return true;
+  }
+  return false;
+}
+
 function JobsList({ jobs, onOpen }) {
   const [view, setView] = useState("active");
+  const [query, setQuery] = useState("");
   const activeJobs = jobs.filter((job) => computeJobStats(job).status !== STATUS.DONE);
   const doneJobs = jobs.filter((job) => computeJobStats(job).status === STATUS.DONE);
-  const shown = view === "active" ? activeJobs : doneJobs;
+  const base = view === "active" ? activeJobs : doneJobs;
+  const shown = query.trim() ? base.filter((job) => jobMatchesSearch(job, query)) : base;
 
   const chip = (key, label, count) => (
     <button
@@ -986,9 +1011,31 @@ function JobsList({ jobs, onOpen }) {
 
   return (
     <Panel style={{ overflow: "hidden" }}>
-      <div style={{ display: "flex", gap: 8, padding: "14px 16px", borderBottom: `1px solid ${C.borderSoft}` }}>
-        {chip("active", "กำลังดำเนินการ", activeJobs.length)}
-        {chip("complete", "เสร็จสมบูรณ์", doneJobs.length)}
+      <div style={{ display: "flex", gap: 12, padding: "14px 16px", borderBottom: `1px solid ${C.borderSoft}`, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", gap: 8 }}>
+          {chip("active", "กำลังดำเนินการ", activeJobs.length)}
+          {chip("complete", "เสร็จสมบูรณ์", doneJobs.length)}
+        </div>
+        <div style={{ position: "relative", minWidth: 240 }}>
+          <Search size={14} color={C.textFaint} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)" }} />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="ค้นหาเลขงาน, ตัวอย่าง, หรือเลขทะเบียน..."
+            style={{
+              width: "100%", background: C.bg2, border: `1px solid ${C.border}`, color: C.text,
+              borderRadius: 6, padding: "7px 10px 7px 30px", fontSize: 13, fontFamily: "inherit", outline: "none",
+            }}
+          />
+          {query && (
+            <button
+              onClick={() => setQuery("")}
+              style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: C.textFaint, display: "flex" }}
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
       </div>
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
@@ -1026,7 +1073,9 @@ function JobsList({ jobs, onOpen }) {
             })}
             {shown.length === 0 && (
               <tr><td colSpan={9} style={{ padding: 30, textAlign: "center", color: C.textFaint }}>
-                {view === "active" ? "ไม่มีงานที่กำลังดำเนินการ" : "ยังไม่มีงานที่เสร็จสมบูรณ์"}
+                {query.trim()
+                  ? `ไม่พบงานที่ตรงกับ "${query.trim()}"`
+                  : view === "active" ? "ไม่มีงานที่กำลังดำเนินการ" : "ยังไม่มีงานที่เสร็จสมบูรณ์"}
               </td></tr>
             )}
           </tbody>
