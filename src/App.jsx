@@ -39,6 +39,28 @@ function uid() {
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WARN_DAYS = 10; // แจ้งเตือนเมื่อใกล้ครบกำหนด
 const LATE_DAYS = 15; // ถือว่าล่าช้าเมื่อครบกำหนดนี้
+const LATE_REPEAT_DAYS = 10; // แจ้งเตือนซ้ำทุกกี่วันหลังจากล่าช้าแล้ว
+const LATE_REPEAT_MS = LATE_REPEAT_DAYS * DAY_MS;
+
+// Convert a timestamp to a yyyy-mm-dd string for <input type="date">, in
+// local time (so it lines up with what the user sees in fmtDate).
+function tsToDateInputValue(ts) {
+  const d = ts ? new Date(ts) : new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+// Apply a yyyy-mm-dd date-input value to a base timestamp, keeping the
+// original time-of-day (so "days since" math stays stable within a day).
+function dateInputValueToTs(value, baseTs) {
+  if (!value) return baseTs ?? nowTS();
+  const [y, m, d] = value.split("-").map(Number);
+  if (!y || !m || !d) return baseTs ?? nowTS();
+  const dt = new Date(baseTs ?? nowTS());
+  dt.setFullYear(y, m - 1, d);
+  return dt.getTime();
+}
 
 function daysSince(ts) {
   if (!ts) return 0;
@@ -626,7 +648,7 @@ function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, suggestedRegS
   const [showImport, setShowImport] = useState(false);
   const [importText, setImportText] = useState("");
   const [importInfo, setImportInfo] = useState(null);
-  const [receivedTs, setReceivedTs] = useState(null);
+  const [createdTs, setCreatedTs] = useState(isEdit ? editingJob.createdAt || nowTS() : nowTS());
 
   const handleParseImport = () => {
     const parsed = parseImportText(importText);
@@ -655,7 +677,7 @@ function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, suggestedRegS
       setRegCount(nextCount);
       setRegEnd(rangeMatch ? rangeMatch[2] : computeRegEnd(nextStart, nextCount));
     }
-    if (!isEdit && parsed.receivedDate) setReceivedTs(thaiDateToTs(parsed.receivedDate));
+    if (parsed.receivedDate) setCreatedTs(thaiDateToTs(parsed.receivedDate));
     setImportInfo({
       ok: true,
       msg: `นำเข้าแล้ว — พารามิเตอร์ ${parsed.parameters.length} รายการ${parsed.sampleSummary ? `, ตัวอย่าง: ${parsed.sampleSummary}` : ""} ตรวจสอบและแก้ไขเพิ่มเติมได้ตามต้องการ`,
@@ -704,6 +726,8 @@ function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, suggestedRegS
         ...restEditingJob,
         sample: sample.trim(),
         parameters,
+        createdAt: createdTs,
+        lateNotifiedAt: null,
         regStart: regStart.trim(),
         regEnd: regEnd.trim(),
         sampleCount: regCount || 0,
@@ -725,7 +749,7 @@ function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, suggestedRegS
       onCreate({
         jobNo: jobNo.trim(),
         sample: sample.trim(),
-        createdAt: receivedTs || nowTS(),
+        createdAt: createdTs || nowTS(),
         parameters,
         regStart: regStart.trim(),
         regEnd: regEnd.trim(),
@@ -788,7 +812,7 @@ function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, suggestedRegS
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
         <div>
           <label style={{ fontSize: 11, color: C.textMuted, display: "block", marginBottom: 4 }}>รหัสงาน (Job No)</label>
           <input
@@ -814,6 +838,15 @@ function NewJobForm({ onCancel, onCreate, onSaveEdit, suggestedNo, suggestedRegS
           <datalist id="sample-list">
             {knownSamples.map((s) => <option key={s} value={s} />)}
           </datalist>
+        </div>
+        <div>
+          <label style={{ fontSize: 11, color: C.textMuted, display: "block", marginBottom: 4 }}>วันที่สร้าง (Created)</label>
+          <input
+            type="date"
+            style={{ ...inputStyle, fontFamily: "monospace" }}
+            value={tsToDateInputValue(createdTs)}
+            onChange={(e) => setCreatedTs(dateInputValueToTs(e.target.value, createdTs))}
+          />
         </div>
       </div>
 
@@ -1566,13 +1599,13 @@ export default function App() {
   }, []);
 
   // แจ้งเตือนงานล่าช้า: เมื่อรหัสงานใดครบกำหนด LATE_DAYS และยังไม่เสร็จ
-  // จะยิงแจ้งเตือนครั้งเดียว (กันยิงซ้ำด้วย flag lateNotifiedAt ที่บันทึกลง
-  // Firebase) โดยระบุพารามิเตอร์ที่ยังไม่เสร็จในข้อความด้วย
+  // จะยิงแจ้งเตือนซ้ำทุก LATE_REPEAT_MS จนกว่างานจะเสร็จ (เก็บเวลาแจ้งเตือน
+  // ล่าสุดไว้ที่ lateNotifiedAt ใน Firebase เพื่อกันยิงถี่เกินไป)
   useEffect(() => {
     jobs.forEach((job) => {
-      if (job.lateNotifiedAt) return;
       if (computeJobStats(job).status === STATUS.DONE) return;
       if (deadlineInfo(job).level !== "late") return;
+      if (job.lateNotifiedAt && nowTS() - job.lateNotifiedAt < LATE_REPEAT_MS) return;
       const updatedJob = { ...job, lateNotifiedAt: nowTS() };
       saveJob(updatedJob)
         .then(() => notifyLineJobLate(updatedJob))
