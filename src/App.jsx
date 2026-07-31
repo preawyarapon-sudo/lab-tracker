@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { FlaskConical, Plus, X, RefreshCw, LayoutGrid, ListChecks, Users, Layers, Trash2, Play, CheckCircle2, CircleDot, Circle, ChevronRight, ChevronDown, AlertCircle, AlertTriangle, Clock, ClipboardPaste, Sparkles, Search } from "lucide-react";
 import { db } from "./firebase";
 import { ref, onValue, set, remove } from "firebase/database";
@@ -1619,14 +1619,25 @@ export default function App() {
   // Firebase ทำให้พลาดจังหวะแจ้งเตือน วิธีนี้ใช้ flag doneNotifiedAt กันยิงซ้ำ
   // และเคลียร์ flag อัตโนมัติถ้างานถูกเปิดใหม่ (เช่น กด reset พารามิเตอร์)
   // เพื่อให้แจ้งเตือนได้อีกครั้งเมื่อเสร็จรอบถัดไป
+  //
+  // รอบแรกที่โหลดข้อมูล (ก่อนหน้านี้งานเก่าที่เสร็จแล้วไม่เคยมี flag นี้เลย)
+  // จะแค่ติด flag เงียบๆ ให้งานที่เสร็จอยู่แล้วก่อนหน้า โดยไม่ยิงแจ้งเตือน
+  // ย้อนหลัง — ป้องกันข้อความแจ้งเตือนงานเก่าส่งรัวๆ ตอนเปิดแอปครั้งแรก
+  const doneNotifyInitializedRef = useRef(false);
   useEffect(() => {
+    const isFirstRun = !doneNotifyInitializedRef.current;
+    doneNotifyInitializedRef.current = true;
     jobs.forEach((job) => {
       const isDoneNow = computeJobStats(job).status === STATUS.DONE;
       if (isDoneNow && !job.doneNotifiedAt) {
         const updatedJob = { ...job, doneNotifiedAt: nowTS() };
-        saveJob(updatedJob)
-          .then(() => notifyLineJobDone(updatedJob))
-          .catch((e) => console.error("save doneNotifiedAt failed", e));
+        if (isFirstRun) {
+          saveJob(updatedJob).catch((e) => console.error("backfill doneNotifiedAt failed", e));
+        } else {
+          saveJob(updatedJob)
+            .then(() => notifyLineJobDone(updatedJob))
+            .catch((e) => console.error("save doneNotifiedAt failed", e));
+        }
       } else if (!isDoneNow && job.doneNotifiedAt) {
         saveJob({ ...job, doneNotifiedAt: null }).catch((e) => console.error("clear doneNotifiedAt failed", e));
       }
