@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { FlaskConical, Plus, X, RefreshCw, LayoutGrid, ListChecks, Users, Layers, Trash2, Play, CheckCircle2, CircleDot, Circle, ChevronRight, ChevronDown, AlertCircle, AlertTriangle, Clock, ClipboardPaste, Sparkles, Search, Wrench } from "lucide-react";
 import { db } from "./firebase";
-import { ref, onValue, set, remove } from "firebase/database";
+import { ref, onValue, set, remove, runTransaction } from "firebase/database";
 
 const C = {
   bg: "#FFFFFF",
@@ -274,6 +274,24 @@ function computeJobStats(job) {
   return { total, complete, running, progress, status };
 }
 
+// True if a parameter has any unresolved "needs repair" flag (independent
+// of its WAIT/RUN/DONE status — a completed result can still be flagged for
+// re-analysis).
+function paramNeedsRepair(p) {
+  return (p.repairs || []).some((r) => !r.resolvedAt);
+}
+// Every unresolved repair across a whole job, used for the row badge in the
+// Jobs list and the "ต้องซ่อม" filter.
+function jobPendingRepairs(job) {
+  const items = [];
+  for (const p of job.parameters) {
+    for (const r of p.repairs || []) {
+      if (!r.resolvedAt) items.push({ param: p, repair: r });
+    }
+  }
+  return items;
+}
+
 // Groups every parameter by its analyst, split into three buckets so the
 // Analysts tab can show "currently running" separately from "not yet
 // queued" and "already finished".
@@ -282,9 +300,13 @@ function computeAnalysts(jobs) {
   for (const job of jobs) {
     for (const p of job.parameters) {
       if (!p.analyst) continue;
-      if (!map[p.analyst]) map[p.analyst] = { name: p.analyst, running: [], waiting: [], done: [] };
+      if (!map[p.analyst]) map[p.analyst] = { name: p.analyst, running: [], waiting: [], done: [], repair: [] };
       const row = { ...p, jobNo: job.jobNo, sample: job.sample };
-      if (p.status === STATUS.RUN) map[p.analyst].running.push(row);
+      // Repair-flagged items get pulled into their own bucket regardless of
+      // WAIT/RUN/DONE status, so they show up as a distinct "ต้องซ่อม" queue
+      // instead of being buried inside running/waiting/done.
+      if (paramNeedsRepair(p)) map[p.analyst].repair.push(row);
+      else if (p.status === STATUS.RUN) map[p.analyst].running.push(row);
       else if (p.status === STATUS.WAIT) map[p.analyst].waiting.push(row);
       else map[p.analyst].done.push(row);
     }
@@ -530,6 +552,30 @@ function subscribeJobs(callback, onError) {
 }
 async function saveJob(job) {
   await set(ref(db, `jobs/${job.jobNo}`), job);
+}
+// Atomically claims a "...NotifiedAt" flag on a single job field. This app
+// is shared by the whole team (everyone has it open at once), and the two
+// automatic notification effects in App() used to do a plain read-then-write:
+// each client read `job.lateNotifiedAt`/`job.doneNotifiedAt` from its own
+// local `jobs` state, and if it looked unset, wrote a new timestamp and then
+// fired the LINE message. When two clients had the same job in front of them
+// at the same moment (e.g. right as the last parameter was marked Complete),
+// both would see the flag as unset *before* either write landed, so both
+// wrote and both notified — that's the duplicate "งานเสร็จสมบูรณ์"/"งานล่าช้า"
+// messages.
+// runTransaction fixes this: Firebase re-runs the update function against the
+// latest value straight from the server (and retries on conflict), so when
+// two clients race, only one of them ever gets a commit where `shouldClaim`
+// still returns true — the loser's function reruns against the winner's new
+// value and returns undefined, which aborts its write. Only the winner
+// should call the LINE notify function.
+async function claimNotifyFlag(jobNo, field, shouldClaim) {
+  const flagRef = ref(db, `jobs/${jobNo}/${field}`);
+  const result = await runTransaction(flagRef, (current) => {
+    if (!shouldClaim(current)) return; // undefined = abort, leave it alone
+    return nowTS();
+  });
+  return result.committed;
 }
 async function notifyLine(message) {
   try {
@@ -1198,22 +1244,25 @@ function JobsList({ jobs, onOpen }) {
   const [query, setQuery] = useState("");
   const activeJobs = jobs.filter((job) => computeJobStats(job).status !== STATUS.DONE);
   const doneJobs = jobs.filter((job) => computeJobStats(job).status === STATUS.DONE);
-  const base = view === "active" ? activeJobs : doneJobs;
+  // A job can need repair even after every parameter shows Complete, so this
+  // filter cuts across active/complete rather than being a sub-set of one.
+  const repairJobs = jobs.filter((job) => jobPendingRepairs(job).length > 0);
+  const base = view === "repair" ? repairJobs : view === "active" ? activeJobs : doneJobs;
   const shown = query.trim() ? base.filter((job) => jobMatchesSearch(job, query)) : base;
 
-  const chip = (key, label, count) => (
+  const chip = (key, label, count, accent) => (
     <button
       onClick={() => setView(key)}
       style={{
         display: "flex", alignItems: "center", gap: 6,
-        background: view === key ? C.panel2 : "transparent",
-        border: `1px solid ${view === key ? C.cyan : C.border}`,
-        color: view === key ? C.text : C.textMuted,
+        background: view === key ? (accent ? C.redDim : C.panel2) : "transparent",
+        border: `1px solid ${view === key ? (accent || C.cyan) : accent ? C.red : C.border}`,
+        color: view === key ? (accent || C.text) : accent ? C.red : C.textMuted,
         borderRadius: 999, padding: "6px 14px", fontSize: 12.5, fontWeight: 600,
         cursor: "pointer", fontFamily: "inherit",
       }}
     >
-      {label} <span style={{ fontFamily: "monospace", opacity: 0.8 }}>({count})</span>
+      {accent && <Wrench size={12} />} {label} <span style={{ fontFamily: "monospace", opacity: 0.8 }}>({count})</span>
     </button>
   );
 
@@ -1223,6 +1272,7 @@ function JobsList({ jobs, onOpen }) {
         <div style={{ display: "flex", gap: 8 }}>
           {chip("active", "กำลังดำเนินการ", activeJobs.length)}
           {chip("complete", "เสร็จสมบูรณ์", doneJobs.length)}
+          {repairJobs.length > 0 && chip("repair", "ต้องซ่อม", repairJobs.length, C.red)}
         </div>
         <div style={{ position: "relative", minWidth: 240 }}>
           <Search size={14} color={C.textFaint} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)" }} />
@@ -1249,7 +1299,7 @@ function JobsList({ jobs, onOpen }) {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
             <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-              {["Job No", "Sample", "Created", "Params", "Complete", "Progress", "Status", "Deadline", ""].map((h) => (
+              {["Job No", "Sample", "Created", "Params", "Complete", "Progress", "Status", "", "Deadline", ""].map((h) => (
                 <th key={h} style={{ textAlign: "left", padding: "10px 12px", color: C.textMuted, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 600 }}>{h}</th>
               ))}
             </tr>
@@ -1274,16 +1324,26 @@ function JobsList({ jobs, onOpen }) {
                     </div>
                   </td>
                   <td style={{ padding: "10px 12px" }}><StatusBadge status={stats.status} /></td>
+                  <td style={{ padding: "10px 12px" }}>
+                    {jobPendingRepairs(job).length > 0 && (
+                      <span
+                        title={`มีรายการต้องซ่อม ${jobPendingRepairs(job).length} รายการ`}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: C.red, background: C.redDim, padding: "2px 8px", borderRadius: 4, whiteSpace: "nowrap" }}
+                      >
+                        <Wrench size={11} /> {jobPendingRepairs(job).length}
+                      </span>
+                    )}
+                  </td>
                   <td style={{ padding: "10px 12px" }}><DeadlineBadge job={job} /></td>
                   <td style={{ padding: "10px 12px" }}><ChevronRight size={15} color={C.textFaint} /></td>
                 </tr>
               );
             })}
             {shown.length === 0 && (
-              <tr><td colSpan={9} style={{ padding: 30, textAlign: "center", color: C.textFaint }}>
+              <tr><td colSpan={10} style={{ padding: 30, textAlign: "center", color: C.textFaint }}>
                 {query.trim()
                   ? `ไม่พบงานที่ตรงกับ "${query.trim()}"`
-                  : view === "active" ? "ไม่มีงานที่กำลังดำเนินการ" : "ยังไม่มีงานที่เสร็จสมบูรณ์"}
+                  : view === "active" ? "ไม่มีงานที่กำลังดำเนินการ" : view === "repair" ? "ไม่มีงานที่ต้องซ่อม" : "ยังไม่มีงานที่เสร็จสมบูรณ์"}
               </td></tr>
             )}
           </tbody>
@@ -1332,6 +1392,34 @@ function QueueRow({ p, onOpenJob, tone, checked, onToggle }) {
       <span style={{ fontSize: 11.5, fontWeight: 700, color: tone === "amber" ? C.amber : C.textMuted }}>
         {tone === "amber" ? "กำลังวิเคราะห์" : "รอคิว"}
       </span>
+    </div>
+  );
+}
+
+// A repair-flagged item shown inside an analyst's "ต้องซ่อม" section. Unlike
+// QueueRow it isn't selectable — start/complete/reset bulk actions don't
+// apply to a repair flag, which is resolved item-by-item from Job Detail —
+// so the whole row just opens the job instead.
+function RepairQueueRow({ p, onOpenJob }) {
+  const pendingCount = (p.repairs || []).filter((r) => !r.resolvedAt).length;
+  return (
+    <div
+      onClick={() => onOpenJob(p.jobNo)}
+      style={{
+        display: "grid", gridTemplateColumns: "110px 1fr 1fr 90px",
+        gap: 10, alignItems: "center", padding: "8px 10px",
+        background: C.panel, border: `1px solid ${C.redDim}`, borderRadius: 6, cursor: "pointer",
+      }}
+    >
+      <span style={{ fontFamily: "monospace", fontWeight: 700, color: C.cyan, fontSize: 12 }}>{p.jobNo}</span>
+      <span style={{ color: C.textMuted, fontSize: 12 }}>{p.sample || "-"}</span>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: C.text, fontSize: 13, fontWeight: 600 }}>
+        <Wrench size={12} color={C.red} /> {p.name}
+        <span style={{ fontSize: 10.5, fontWeight: 700, color: C.red, background: C.redDim, padding: "1px 6px", borderRadius: 999, fontFamily: "monospace" }}>
+          {pendingCount} รายการ
+        </span>
+      </span>
+      <span style={{ fontSize: 11.5, fontWeight: 700, color: C.red }}>ต้องซ่อม</span>
     </div>
   );
 }
@@ -1408,6 +1496,7 @@ function AnalystRow({ a, onOpenJob, onBulkUpdate }) {
           {current ? <><CircleDot size={12} color={C.amber} /> {current.name}</> : "-"}
         </span>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {a.repair.length > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: C.red, background: C.redDim, padding: "2px 8px", borderRadius: 4, whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 4 }}><Wrench size={11} /> {a.repair.length} ต้องซ่อม</span>}
           {a.running.length > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: C.amber, background: C.amberDim, padding: "2px 8px", borderRadius: 4, whiteSpace: "nowrap" }}>{a.running.length} กำลังทำ</span>}
           {a.waiting.length > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, background: C.panel2, padding: "2px 8px", borderRadius: 4, whiteSpace: "nowrap" }}>{a.waiting.length} รอคิว</span>}
         </div>
@@ -1433,6 +1522,18 @@ function AnalystRow({ a, onOpenJob, onBulkUpdate }) {
           )}
 
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {a.repair.length > 0 && (
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.red, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6, display: "flex", alignItems: "center", gap: 8 }}>
+                  <Wrench size={12} /> ต้องซ่อม ({a.repair.length})
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {a.repair.map((p) => (
+                    <RepairQueueRow key={`${p.jobNo}-${p.id}`} p={p} onOpenJob={onOpenJob} />
+                  ))}
+                </div>
+              </div>
+            )}
             <div>
               <div style={{ fontSize: 11, fontWeight: 700, color: C.amber, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6, display: "flex", alignItems: "center", gap: 8 }}>
                 {runningKeys.length > 0 && (
@@ -1719,10 +1820,18 @@ export default function App() {
       if (computeJobStats(job).status === STATUS.DONE) return;
       if (deadlineInfo(job).level !== "late") return;
       if (job.lateNotifiedAt && nowTS() - job.lateNotifiedAt < LATE_REPEAT_MS) return;
-      const updatedJob = { ...job, lateNotifiedAt: nowTS() };
-      saveJob(updatedJob)
-        .then(() => notifyLineJobLate(updatedJob))
-        .catch((e) => console.error("save lateNotifiedAt failed", e));
+      claimNotifyFlag(
+        job.jobNo,
+        "lateNotifiedAt",
+        (current) => !current || nowTS() - current >= LATE_REPEAT_MS
+      )
+        .then((claimed) => {
+          // Only the client that actually wins the transaction sends the
+          // LINE message — everyone else who raced against it gets
+          // claimed:false and stays quiet.
+          if (claimed) notifyLineJobLate(job);
+        })
+        .catch((e) => console.error("claim lateNotifiedAt failed", e));
     });
   }, [jobs]);
 
@@ -1743,13 +1852,19 @@ export default function App() {
     jobs.forEach((job) => {
       const isDoneNow = computeJobStats(job).status === STATUS.DONE;
       if (isDoneNow && !job.doneNotifiedAt) {
-        const updatedJob = { ...job, doneNotifiedAt: nowTS() };
         if (isFirstRun) {
-          saveJob(updatedJob).catch((e) => console.error("backfill doneNotifiedAt failed", e));
+          // Backfill only — claim the flag so it's set, but never notify for
+          // jobs that were already done before this tab was opened.
+          claimNotifyFlag(job.jobNo, "doneNotifiedAt", (current) => !current)
+            .catch((e) => console.error("backfill doneNotifiedAt failed", e));
         } else {
-          saveJob(updatedJob)
-            .then(() => notifyLineJobDone(updatedJob))
-            .catch((e) => console.error("save doneNotifiedAt failed", e));
+          claimNotifyFlag(job.jobNo, "doneNotifiedAt", (current) => !current)
+            .then((claimed) => {
+              // Same race as lateNotifiedAt above: with several tabs open,
+              // only the transaction winner should fire the LINE message.
+              if (claimed) notifyLineJobDone(job);
+            })
+            .catch((e) => console.error("claim doneNotifiedAt failed", e));
         }
       } else if (!isDoneNow && job.doneNotifiedAt) {
         saveJob({ ...job, doneNotifiedAt: null }).catch((e) => console.error("clear doneNotifiedAt failed", e));
