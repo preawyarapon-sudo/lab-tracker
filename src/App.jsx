@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { FlaskConical, Plus, X, RefreshCw, LayoutGrid, ListChecks, Users, Layers, Trash2, Play, CheckCircle2, CircleDot, Circle, ChevronRight, ChevronDown, AlertCircle, AlertTriangle, Clock, ClipboardPaste, Sparkles, Search } from "lucide-react";
+import { FlaskConical, Plus, X, RefreshCw, LayoutGrid, ListChecks, Users, Layers, Trash2, Play, CheckCircle2, CircleDot, Circle, ChevronRight, ChevronDown, AlertCircle, AlertTriangle, Clock, ClipboardPaste, Sparkles, Search, Wrench } from "lucide-react";
 import { db } from "./firebase";
 import { ref, onValue, set, remove } from "firebase/database";
 
@@ -551,6 +551,36 @@ function notifyLineJobDone(job) {
     ].join("\n")
   );
 }
+// Parse a free-typed list of registration numbers, split on comma/space/
+// newline/semicolon, trimmed, empties dropped, duplicates removed.
+function parseRegList(text) {
+  return Array.from(
+    new Set(
+      String(text || "")
+        .split(/[\s,;]+/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+    )
+  );
+}
+function notifyLineRepairFlag(job, param, regNos) {
+  return notifyLine(
+    [
+      `🔧 แจ้งซ่อมผล: ${job.jobNo}`,
+      `พารามิเตอร์: ${param.name || "-"}`,
+      `เลขทะเบียน: ${regNos.join(", ")}`,
+    ].join("\n")
+  );
+}
+function notifyLineRepairDone(job, param, regNos) {
+  return notifyLine(
+    [
+      `✅ ซ่อมผลเสร็จแล้ว: ${job.jobNo}`,
+      `พารามิเตอร์: ${param.name || "-"}`,
+      `เลขทะเบียน: ${regNos.join(", ")}`,
+    ].join("\n")
+  );
+}
 function notifyLineJobLate(job) {
   const pendingParams = (job.parameters || [])
     .filter((p) => p.status !== STATUS.DONE)
@@ -962,8 +992,88 @@ function ParamActions({ jobNo, p, onUpdateParam }) {
   return null;
 }
 
+// Shows any registration numbers flagged as "needs repair" for a single
+// parameter (independent of the parameter's own WAIT/RUN/DONE status), and
+// a small inline form to flag new ones. Renders as an extra table row.
+function ParamRepairs({ jobNo, p, onFlagRepair, onResolveRepair }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const pending = (p.repairs || []).filter((r) => !r.resolvedAt);
+
+  const submit = () => {
+    if (!text.trim()) return;
+    onFlagRepair(jobNo, p.id, text);
+    setText("");
+    setOpen(false);
+  };
+
+  if (!open && pending.length === 0) {
+    return (
+      <tr style={{ borderBottom: `1px solid ${C.borderSoft}` }}>
+        <td></td>
+        <td colSpan={6} style={{ padding: "0 8px 8px" }}>
+          <button
+            onClick={() => setOpen(true)}
+            style={{ fontSize: 11, color: C.textFaint, background: "none", border: "none", cursor: "pointer", padding: 0, display: "inline-flex", alignItems: "center", gap: 4 }}
+          >
+            <Wrench size={11} /> แจ้งซ่อมผล
+          </button>
+        </td>
+      </tr>
+    );
+  }
+
+  return (
+    <tr style={{ borderBottom: `1px solid ${C.borderSoft}` }}>
+      <td></td>
+      <td colSpan={6} style={{ padding: "0 8px 10px" }}>
+        {pending.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+            {pending.map((r) => (
+              <span
+                key={r.id}
+                style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 600, color: C.amber, background: C.amberDim, padding: "3px 6px 3px 8px", borderRadius: 5 }}
+              >
+                <Wrench size={11} /> {r.regNo}
+                <button
+                  onClick={() => onResolveRepair(jobNo, p.id, r.id)}
+                  title="ซ่อมเสร็จแล้ว"
+                  style={{ marginLeft: 2, border: "none", background: "rgba(255,255,255,0.6)", borderRadius: 4, width: 16, height: 16, lineHeight: "16px", cursor: "pointer", color: C.green, fontSize: 11, fontWeight: 800, padding: 0 }}
+                >
+                  ✓
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        {open ? (
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <input
+              autoFocus
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") submit(); if (e.key === "Escape") { setOpen(false); setText(""); } }}
+              placeholder="เลขทะเบียนที่ต้องซ่อม เช่น 5233 5265 5266"
+              style={{ flex: 1, maxWidth: 320, padding: "5px 8px", fontSize: 12, borderRadius: 5, border: `1px solid ${C.border}`, background: C.bg, color: C.text, fontFamily: "monospace" }}
+            />
+            <Btn small onClick={submit}>บันทึก</Btn>
+            <Btn small onClick={() => { setOpen(false); setText(""); }}>ยกเลิก</Btn>
+          </div>
+        ) : (
+          <button
+            onClick={() => setOpen(true)}
+            style={{ fontSize: 11, color: C.textFaint, background: "none", border: "none", cursor: "pointer", padding: 0, display: "inline-flex", alignItems: "center", gap: 4 }}
+          >
+            <Wrench size={11} /> แจ้งซ่อมเพิ่ม
+          </button>
+        )}
+      </td>
+    </tr>
+  );
+}
+
 // ---------- Job Detail ----------
-function JobDetail({ job, onBack, onUpdateParam, onDeleteJob, onEditJob }) {
+function JobDetail({ job, onBack, onUpdateParam, onDeleteJob, onEditJob, onFlagRepair, onResolveRepair }) {
   const stats = computeJobStats(job);
   return (
     <Panel style={{ padding: 18 }}>
@@ -1030,19 +1140,22 @@ function JobDetail({ job, onBack, onUpdateParam, onDeleteJob, onEditJob }) {
           </thead>
           <tbody>
             {job.parameters.map((p) => (
-              <tr key={p.id} style={{ borderBottom: `1px solid ${C.borderSoft}` }}>
-                <td style={{ padding: "8px" }}><StatusGlyph status={p.status} /></td>
-                <td style={{ padding: "8px", fontWeight: 600, color: C.text }}>{p.name}</td>
-                <td style={{ padding: "8px", color: C.textMuted }}>{p.analyst || "-"}</td>
-                <td style={{ padding: "8px" }}><StatusBadge status={p.status} /></td>
-                <td style={{ padding: "8px", color: C.textMuted, fontFamily: "monospace" }}>{tsLabel(p.startTs, p.start)}</td>
-                <td style={{ padding: "8px", color: C.textMuted, fontFamily: "monospace" }}>{tsLabel(p.finishTs, p.finish)}</td>
-                <td style={{ padding: "8px" }}>
-                  <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                    <ParamActions jobNo={job.jobNo} p={p} onUpdateParam={onUpdateParam} />
-                  </div>
-                </td>
-              </tr>
+              <React.Fragment key={p.id}>
+                <tr style={{ borderBottom: (p.repairs || []).some((r) => !r.resolvedAt) ? "none" : `1px solid ${C.borderSoft}` }}>
+                  <td style={{ padding: "8px" }}><StatusGlyph status={p.status} /></td>
+                  <td style={{ padding: "8px", fontWeight: 600, color: C.text }}>{p.name}</td>
+                  <td style={{ padding: "8px", color: C.textMuted }}>{p.analyst || "-"}</td>
+                  <td style={{ padding: "8px" }}><StatusBadge status={p.status} /></td>
+                  <td style={{ padding: "8px", color: C.textMuted, fontFamily: "monospace" }}>{tsLabel(p.startTs, p.start)}</td>
+                  <td style={{ padding: "8px", color: C.textMuted, fontFamily: "monospace" }}>{tsLabel(p.finishTs, p.finish)}</td>
+                  <td style={{ padding: "8px" }}>
+                    <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                      <ParamActions jobNo={job.jobNo} p={p} onUpdateParam={onUpdateParam} />
+                    </div>
+                  </td>
+                </tr>
+                <ParamRepairs jobNo={job.jobNo} p={p} onFlagRepair={onFlagRepair} onResolveRepair={onResolveRepair} />
+              </React.Fragment>
             ))}
           </tbody>
         </table>
@@ -1700,6 +1813,74 @@ export default function App() {
     }
   };
 
+  // Flags specific registration numbers within one parameter as needing
+  // rework, without touching the parameter's own WAIT/RUN/DONE status or
+  // any other registration number in the same parameter.
+  const handleFlagRepair = async (jobNo, paramId, regNosText) => {
+    const job = jobs.find((j) => j.jobNo === jobNo);
+    if (!job) return;
+    const regNos = parseRegList(regNosText);
+    if (regNos.length === 0) return;
+    let targetParam = null;
+    const parameters = job.parameters.map((p) => {
+      if (p.id !== paramId) return p;
+      const newRepairs = regNos.map((regNo) => ({
+        id: `${nowTS()}-${regNo}-${Math.random().toString(36).slice(2, 7)}`,
+        regNo,
+        flaggedAt: nowTS(),
+        resolvedAt: null,
+      }));
+      targetParam = { ...p, repairs: [...(p.repairs || []), ...newRepairs] };
+      return targetParam;
+    });
+    const updatedJob = { ...job, parameters };
+    try {
+      await saveJob(updatedJob);
+      if (targetParam) notifyLineRepairFlag(updatedJob, targetParam, regNos);
+    } catch (e) {
+      setError("บันทึกการแจ้งซ่อมไม่สำเร็จ");
+    }
+  };
+
+  // Marks one flagged registration number as repaired. Doesn't notify per
+  // item — waits until every pending repair on that parameter is cleared,
+  // then sends a single LINE message listing every registration number
+  // resolved in that round (so 3 fixes on the same parameter = 1 message).
+  const handleResolveRepair = async (jobNo, paramId, repairId) => {
+    const job = jobs.find((j) => j.jobNo === jobNo);
+    if (!job) return;
+    let targetParam = null;
+    let batchToNotify = null;
+    const parameters = job.parameters.map((p) => {
+      if (p.id !== paramId) return p;
+      const repairs = (p.repairs || []).map((r) =>
+        r.id === repairId && !r.resolvedAt ? { ...r, resolvedAt: nowTS() } : r
+      );
+      const stillPending = repairs.some((r) => !r.resolvedAt);
+      let finalRepairs = repairs;
+      if (!stillPending) {
+        const toNotify = repairs.filter((r) => r.resolvedAt && !r.resolvedNotifiedAt);
+        if (toNotify.length > 0) {
+          batchToNotify = toNotify.map((r) => r.regNo);
+          finalRepairs = repairs.map((r) =>
+            r.resolvedAt && !r.resolvedNotifiedAt ? { ...r, resolvedNotifiedAt: nowTS() } : r
+          );
+        }
+      }
+      targetParam = { ...p, repairs: finalRepairs };
+      return targetParam;
+    });
+    const updatedJob = { ...job, parameters };
+    try {
+      await saveJob(updatedJob);
+      if (targetParam && batchToNotify && batchToNotify.length > 0) {
+        notifyLineRepairDone(updatedJob, targetParam, batchToNotify);
+      }
+    } catch (e) {
+      setError("บันทึกการซ่อมเสร็จไม่สำเร็จ");
+    }
+  };
+
   // Applies the same action (start/complete/reset) to many parameters at
   // once, possibly spanning several jobs — used by the multi-select bulk
   // actions in AnalystsTable. Groups by job first and writes each affected
@@ -1825,7 +2006,7 @@ export default function App() {
                   />
                 )}
                 {selectedJob && !editingJob ? (
-                  <JobDetail job={selectedJob} onBack={() => setSelected(null)} onUpdateParam={handleUpdateParam} onDeleteJob={handleDeleteJob} onEditJob={setEditingJob} />
+                  <JobDetail job={selectedJob} onBack={() => setSelected(null)} onUpdateParam={handleUpdateParam} onDeleteJob={handleDeleteJob} onEditJob={setEditingJob} onFlagRepair={handleFlagRepair} onResolveRepair={handleResolveRepair} />
                 ) : (
                   !editingJob && <JobsList jobs={jobs} onOpen={openJob} />
                 )}
