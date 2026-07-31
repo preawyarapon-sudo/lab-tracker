@@ -1613,6 +1613,26 @@ export default function App() {
     });
   }, [jobs]);
 
+  // แจ้งเตือนงานเสร็จ: เช็คจากข้อมูลกลาง (jobs ที่ sync มาจาก Firebase) แทน
+  // การเช็ค state ในเครื่อง ณ ตอนกดปุ่ม — เพราะถ้ากดเสร็จพารามิเตอร์ 2 ตัว
+  // ติดกันเร็วๆ การเช็คตอนกดปุ่มอาจอ่าน state เก่าที่ยังไม่ทันอัปเดตจาก
+  // Firebase ทำให้พลาดจังหวะแจ้งเตือน วิธีนี้ใช้ flag doneNotifiedAt กันยิงซ้ำ
+  // และเคลียร์ flag อัตโนมัติถ้างานถูกเปิดใหม่ (เช่น กด reset พารามิเตอร์)
+  // เพื่อให้แจ้งเตือนได้อีกครั้งเมื่อเสร็จรอบถัดไป
+  useEffect(() => {
+    jobs.forEach((job) => {
+      const isDoneNow = computeJobStats(job).status === STATUS.DONE;
+      if (isDoneNow && !job.doneNotifiedAt) {
+        const updatedJob = { ...job, doneNotifiedAt: nowTS() };
+        saveJob(updatedJob)
+          .then(() => notifyLineJobDone(updatedJob))
+          .catch((e) => console.error("save doneNotifiedAt failed", e));
+      } else if (!isDoneNow && job.doneNotifiedAt) {
+        saveJob({ ...job, doneNotifiedAt: null }).catch((e) => console.error("clear doneNotifiedAt failed", e));
+      }
+    });
+  }, [jobs]);
+
   // Data is live via onValue, so "refresh" just re-affirms the connection —
   // kept mainly so the button still gives visible feedback.
   const refresh = useCallback(() => {
@@ -1654,7 +1674,6 @@ export default function App() {
   const handleUpdateParam = async (jobNo, paramId, action) => {
     const job = jobs.find((j) => j.jobNo === jobNo);
     if (!job) return;
-    const wasDone = computeJobStats(job).status === STATUS.DONE;
     const parameters = job.parameters.map((p) => {
       if (p.id !== paramId) return p;
       if (action === "start") return { ...p, status: STATUS.RUN, start: nowHM(), startTs: nowTS(), updatedTs: nowTS(), updatedLabel: nowHM() };
@@ -1665,10 +1684,6 @@ export default function App() {
     const updatedJob = { ...job, parameters };
     try {
       await saveJob(updatedJob);
-      const isNowDone = computeJobStats(updatedJob).status === STATUS.DONE;
-      if (!wasDone && isNowDone) {
-        notifyLineJobDone(updatedJob);
-      }
     } catch (e) {
       setError("อัปเดตสถานะไม่สำเร็จ");
     }
@@ -1692,7 +1707,6 @@ export default function App() {
         Object.entries(byJob).map(async ([jobNo, paramIds]) => {
           const job = jobs.find((j) => j.jobNo === jobNo);
           if (!job) return null;
-          const wasDone = computeJobStats(job).status === STATUS.DONE;
           const parameters = job.parameters.map((p) => {
             if (!paramIds.has(p.id)) return p;
             if (action === "start") return { ...p, status: STATUS.RUN, start: nowHM(), startTs: nowTS(), updatedTs: nowTS(), updatedLabel: nowHM() };
@@ -1702,10 +1716,6 @@ export default function App() {
           });
           const updatedJob = { ...job, parameters };
           await saveJob(updatedJob);
-          const isNowDone = computeJobStats(updatedJob).status === STATUS.DONE;
-          if (!wasDone && isNowDone) {
-            notifyLineJobDone(updatedJob);
-          }
         })
       );
     } catch (e) {
